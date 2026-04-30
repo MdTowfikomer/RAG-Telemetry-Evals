@@ -1,0 +1,50 @@
+# RAG Architecture Overview
+
+RAG (Retrieval-Augmented Generation) is an AI framework that combines information retrieval with text generation. It works by first retrieving relevant documents from a knowledge base, then using those documents as context for a language model to generate accurate, grounded responses.
+
+## How RAG Works
+
+The RAG pipeline consists of three main stages:
+
+1. **Indexing**: Documents are split into chunks, converted into vector embeddings, and stored in a vector database like Qdrant or Pinecone.
+
+2. **Retrieval**: When a user asks a question, it's converted into a vector embedding and used to search the vector database for the most semantically similar document chunks.
+
+3. **Generation**: The retrieved chunks are combined with the user's query and sent to a large language model (LLM) like GPT-4 or Gemini, which generates a response grounded in the retrieved context.
+
+## Modular RAG Architecture
+
+A modular RAG system breaks down the pipeline into independent, replaceable components:
+
+- **Document Loaders**: Handle various file formats (PDF, TXT, HTML, etc.)
+- **Text Splitters**: Break documents into optimal chunk sizes
+- **Embedding Models**: Convert text to vector representations (e.g., sentence-transformers, OpenAI embeddings)
+- **Vector Stores**: Store and retrieve embeddings efficiently (Qdrant, Weaviate, Chroma)
+- **Retrievers**: Implement search strategies (similarity search, hybrid search, MMR)
+- **Rerankers**: Improve retrieval quality by reordering results
+- **LLMs**: Generate final responses (OpenAI, Anthropic, Google)
+- **Prompt Templates**: Structure how context and queries are presented to the LLM
+
+## Benefits of RAG
+
+- **Reduces hallucinations**: LLMs answer based on real documents, not just training data
+- **Up-to-date information**: Knowledge base can be updated without retraining the model
+- **Source attribution**: Can show which documents were used to generate answers
+- **Cost-effective**: No need to fine-tune large models with domain-specific data
+
+## Common Use Cases
+
+- Customer support chatbots with company knowledge bases
+- Legal document analysis and Q&A
+- Research assistants that synthesize information from papers
+- Enterprise search with natural language interfaces
+
+## Technologies Used in This System
+
+This RAG implementation uses:
+- **Qdrant**: High-performance vector database for similarity search
+- **Arize Phoenix**: Observability and tracing for LLM applications
+- **LangChain**: Framework for building LLM applications
+- **Sentence Transformers**: Open-source embedding models
+- **FastAPI**: Modern web framework for building the API
+- **OpenRouter**: Unified API for accessing multiple LLM providers

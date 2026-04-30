@@ -1,0 +1,9 @@
+langchain
+langchain-community
+langchain-qdrant
+langchain-text-splitters
+langchain-huggingface
+qdrant-client
+sentence-transformers
+pypdf
+dotenv

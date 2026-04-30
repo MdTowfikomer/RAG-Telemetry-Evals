@@ -1,0 +1,21 @@
+[project]
+name = "rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "arize-phoenix>=15.0.0",
+    "langchain>=1.2.16",
+    "langchain-community>=0.4.1",
+    "langchain-huggingface>=1.2.2",
+    "langchain-openai>=1.2.1",
+    "langchain-qdrant>=1.1.0",
+    "langchain-text-splitters>=1.1.2",
+    "openinference-instrumentation-langchain>=0.1.63",
+    "opentelemetry-exporter-otlp>=1.40.0",
+    "pypdf>=6.10.2",
+    "python-dotenv>=1.2.2",
+    "qdrant-client>=1.17.1",
+    "sentence-transformers>=5.4.1",
+]
