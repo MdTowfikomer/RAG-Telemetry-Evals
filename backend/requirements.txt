@@ -3,7 +3,16 @@ langchain-community
 langchain-qdrant
 langchain-text-splitters
 langchain-huggingface
+langchain-openai
 qdrant-client
 sentence-transformers
 pypdf
-dotenv
+python-dotenv
+openinference-instrumentation-langchain
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+arize-phoenix
+uvicorn
+fastapi
+pydantic

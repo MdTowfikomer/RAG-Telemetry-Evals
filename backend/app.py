@@ -1,16 +1,18 @@
+import json
 import os
+import asyncio
 from typing import List
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from dotenv import load_dotenv
 
-from langchain_openai import ChatOpenAI
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
-from langchain_core.prompts import ChatPromptTemplate
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_qdrant import QdrantVectorStore
 
 # Tracing imports
 from openinference.instrumentation.langchain import LangChainInstrumentor
@@ -18,8 +20,10 @@ from opentelemetry import trace as otel_trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from pydantic import BaseModel
+from qdrant_client import QdrantClient
 
-# Load env 
+# Load env
 load_dotenv()
 
 # Config
@@ -30,7 +34,8 @@ PHOENIX_URL = os.getenv("PHOENIX_URL", "http://localhost:6006/v1/traces")
 
 # OpenRouter / OpenAI Config
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001") 
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
+
 
 def setup_tracing():
     print(f"Setting up tracing to Phoenix at {PHOENIX_URL}...")
@@ -40,7 +45,17 @@ def setup_tracing():
     otel_trace.set_tracer_provider(tracer_provider)
     LangChainInstrumentor().instrument()
 
+
 app = FastAPI(title="Modular RAG API")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize components
 setup_tracing()
@@ -58,45 +73,95 @@ llm = ChatOpenAI(
     model=OPENROUTER_MODEL,
 )
 
+
 # Models
 class ChatRequest(BaseModel):
     query: str
+    k: int = 3
+    model: str = OPENROUTER_MODEL
+
 
 class ChatResponse(BaseModel):
     query: str
     response: str
     source_documents: List[str]
 
+
+class ContextResponse(BaseModel):
+    query: str
+    source_documents: List[str]
+
+
 class RAGService:
     @staticmethod
-    def retrieve(query: str, k: int = 3):
-        print(f"Retrieving for: {query}")
+    def retrieve(query: str, k: int = 3) -> List:
+        print(f"Retrieving for: {query} with k={k}")
         docs = vectorstore.similarity_search(query, k=k)
         return docs
 
     @staticmethod
-    def generate(query: str, context_docs: List):
-        print("Generating response...")
+    def generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
+        print(f"Generating response with model={model}...")
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
-        
+
         prompt = ChatPromptTemplate.from_template("""
-        Answer the following question based ONLY on the provided context. 
+        Answer the following question based ONLY on the provided context.
         If the answer is not in the context, say that you don't know.
-        
+
         Context:
         {context}
-        
+
         Question: {question}
         """)
-        
+
+        # Dynamically set the model
+        current_llm = ChatOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            model=model,
+        )
+
         chain = (
             {"context": lambda x: context_text, "question": RunnablePassthrough()}
             | prompt
-            | llm
+            | current_llm
             | StrOutputParser()
         )
-        
+
         return chain.invoke(query)
+
+    @staticmethod
+    async def astream_generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
+        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+
+        prompt = ChatPromptTemplate.from_template("""
+            Answer the following question based ONLY on the provided context.
+            If the answer is not in the context, say that you don't know.
+
+            Context:{context}
+            Question: {question}
+            """)
+
+        current_llm = ChatOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            model=model,
+        )
+
+        chain = (
+            {"context": lambda x: context_text, "question": RunnablePassthrough()}
+            | prompt
+            | current_llm
+            | StrOutputParser()
+        )
+
+        async for chunk in chain.astream(query):
+            payload = json.dumps({"token": chunk})
+            yield f"data: {payload}\n\n"
+            await asyncio.sleep(0.01)  # Tiny delay for smoother UI streaming
+
+        yield "data: [DONE]\n\n"
+
 
 @app.get("/")
 async def root():
@@ -110,24 +175,54 @@ async def chat_endpoint(request: ChatRequest):
 
     try:
         # Step 1: Retrieve
-        docs = RAGService.retrieve(request.query)
-        
+        docs = RAGService.retrieve(request.query, k=request.k)
+
         # Step 2: Generate
-        answer = RAGService.generate(request.query, docs)
-        
+        answer = RAGService.generate(request.query, docs, model=request.model)
+
         return ChatResponse(
             query=request.query,
             response=answer,
-            source_documents=[doc.page_content for doc in docs]
+            source_documents=[doc.page_content for doc in docs],
         )
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/context", response_model=ContextResponse)
+async def context_endpoint(request: ChatRequest):
+    docs = RAGService.retrieve(request.query, k=request.k)
+
+    return ContextResponse(
+        query=request.query, source_documents=[doc.page_content for doc in docs]
+    )
+
+
+@app.get("/chat/stream")
+async def chat_stream_get_endpoint(query: str, k: int = 3, model: str = OPENROUTER_MODEL):
+    docs = RAGService.retrieve(query, k=k)
+
+    return StreamingResponse(
+        RAGService.astream_generate(query, docs, model=model), media_type="text/event-stream"
+    )
+
+
+@app.post("/chat/stream")
+async def chat_stream_endpoint(request: ChatRequest):
+    docs = RAGService.retrieve(request.query, k=request.k)
+
+    return StreamingResponse(
+        RAGService.astream_generate(request.query, docs, model=request.model), media_type="text/event-stream"
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
