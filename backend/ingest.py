@@ -7,6 +7,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+import glob
 
 # Tracing imports
 from openinference.instrumentation.langchain import LangChainInstrumentor
@@ -40,12 +41,14 @@ def ingest():
     # Loaders for different file types
     text_loader = DirectoryLoader(DATA_PATH, glob="**/*.txt", loader_cls=TextLoader)
     md_loader = DirectoryLoader(DATA_PATH, glob="**/*.md", loader_cls=TextLoader)
-    pdf_loader = DirectoryLoader(DATA_PATH, glob="**/*.pdf", loader_cls=PyPDFLoader)
+    pdf_loader = glob.glob("data/**/*.pdf", recursive=True)
     
     docs = []
     docs.extend(text_loader.load())
     docs.extend(md_loader.load())
-    docs.extend(pdf_loader.load())
+    for file in pdf_loader:
+        loader = PyPDFLoader(file)
+        docs.extend(loader.load())
     
     print(f"Loaded {len(docs)} documents.")
     if not docs:
