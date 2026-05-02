@@ -20,6 +20,7 @@ from opentelemetry import trace as otel_trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
@@ -39,8 +40,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 
 def setup_tracing():
     print(f"Setting up tracing to Phoenix at {PHOENIX_URL}...")
+    resource = Resource(attributes={"service.name": "rag-backend"})
     exporter = OTLPSpanExporter(endpoint=PHOENIX_URL)
-    tracer_provider = TracerProvider()
+    tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
     otel_trace.set_tracer_provider(tracer_provider)
     LangChainInstrumentor().instrument()
@@ -59,6 +61,7 @@ app.add_middleware(
 
 # Initialize components
 setup_tracing()
+tracer = otel_trace.get_tracer(__name__)
 embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 client = QdrantClient(url=QDRANT_URL)
 vectorstore = QdrantVectorStore(
@@ -95,43 +98,58 @@ class ContextResponse(BaseModel):
 class RAGService:
     @staticmethod
     def retrieve(query: str, k: int = 3) -> List:
-        print(f"Retrieving for: {query} with k={k}")
-        docs = vectorstore.similarity_search(query, k=k)
-        return docs
+        with tracer.start_as_current_span("retrieve") as span:
+            print(f"Retrieving for: {query} with k={k}")
+            docs = vectorstore.similarity_search(query, k=k)
+            span.set_attribute("retrieval.k", k)
+            span.set_attribute("retrieval.num_docs", len(docs))
+            return docs
+
+    @staticmethod
+    def rerank(query: str, docs: List) -> List:
+        with tracer.start_as_current_span("rerank") as span:
+            print(f"Reranking {len(docs)} docs...")
+            # Placeholder: just return docs
+            span.set_attribute("rerank.num_docs", len(docs))
+            return docs
 
     @staticmethod
     def generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
-        print(f"Generating response with model={model}...")
-        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+        with tracer.start_as_current_span("generate") as span:
+            print(f"Generating response with model={model}...")
+            context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
-        prompt = ChatPromptTemplate.from_template("""
-        Answer the following question based ONLY on the provided context.
-        If the answer is not in the context, say that you don't know.
+            prompt = ChatPromptTemplate.from_template("""
+            Answer the following question based ONLY on the provided context.
+            If the answer is not in the context, say that you don't know.
 
-        Context:
-        {context}
+            Context:
+            {context}
 
-        Question: {question}
-        """)
+            Question: {question}
+            """)
 
-        # Dynamically set the model
-        current_llm = ChatOpenAI(
-            api_key=OPENROUTER_API_KEY,
-            base_url="https://openrouter.ai/api/v1",
-            model=model,
-        )
+            # Dynamically set the model
+            current_llm = ChatOpenAI(
+                api_key=OPENROUTER_API_KEY,
+                base_url="https://openrouter.ai/api/v1",
+                model=model,
+            )
 
-        chain = (
-            {"context": lambda x: context_text, "question": RunnablePassthrough()}
-            | prompt
-            | current_llm
-            | StrOutputParser()
-        )
+            chain = (
+                {"context": lambda x: context_text, "question": RunnablePassthrough()}
+                | prompt
+                | current_llm
+                | StrOutputParser()
+            )
 
-        return chain.invoke(query)
+            res = chain.invoke(query)
+            span.set_attribute("generation.model", model)
+            return res
 
     @staticmethod
     async def astream_generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
+        # Note: Tracing a stream is more complex, keeping it simple for now
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
@@ -174,17 +192,21 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not set")
 
     try:
-        # Step 1: Retrieve
-        docs = RAGService.retrieve(request.query, k=request.k)
+        with tracer.start_as_current_span("chat_flow") as span:
+            # Step 1: Retrieve
+            docs = RAGService.retrieve(request.query, k=request.k)
 
-        # Step 2: Generate
-        answer = RAGService.generate(request.query, docs, model=request.model)
+            # Step 2: Rerank
+            reranked_docs = RAGService.rerank(request.query, docs)
 
-        return ChatResponse(
-            query=request.query,
-            response=answer,
-            source_documents=[doc.page_content for doc in docs],
-        )
+            # Step 3: Generate
+            answer = RAGService.generate(request.query, reranked_docs, model=request.model)
+
+            return ChatResponse(
+                query=request.query,
+                response=answer,
+                source_documents=[doc.page_content for doc in reranked_docs],
+            )
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -193,27 +215,30 @@ async def chat_endpoint(request: ChatRequest):
 @app.post("/context", response_model=ContextResponse)
 async def context_endpoint(request: ChatRequest):
     docs = RAGService.retrieve(request.query, k=request.k)
+    reranked_docs = RAGService.rerank(request.query, docs)
 
     return ContextResponse(
-        query=request.query, source_documents=[doc.page_content for doc in docs]
+        query=request.query, source_documents=[doc.page_content for doc in reranked_docs]
     )
 
 
 @app.get("/chat/stream")
 async def chat_stream_get_endpoint(query: str, k: int = 3, model: str = OPENROUTER_MODEL):
     docs = RAGService.retrieve(query, k=k)
+    reranked_docs = RAGService.rerank(query, docs)
 
     return StreamingResponse(
-        RAGService.astream_generate(query, docs, model=model), media_type="text/event-stream"
+        RAGService.astream_generate(query, reranked_docs, model=model), media_type="text/event-stream"
     )
 
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest):
     docs = RAGService.retrieve(request.query, k=request.k)
+    reranked_docs = RAGService.rerank(request.query, docs)
 
     return StreamingResponse(
-        RAGService.astream_generate(request.query, docs, model=request.model), media_type="text/event-stream"
+        RAGService.astream_generate(request.query, reranked_docs, model=request.model), media_type="text/event-stream"
     )
 
 

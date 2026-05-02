@@ -1,4 +1,4 @@
-import { SlidersHorizontal, Plus } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import type { ChatSettings } from '../types'
 
