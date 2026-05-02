@@ -16,3 +16,5 @@ arize-phoenix
 uvicorn
 fastapi
 pydantic
+ragas
+datasets
