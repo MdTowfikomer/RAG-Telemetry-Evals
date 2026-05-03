@@ -15,6 +15,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.2",
     "openinference-instrumentation-langchain>=0.1.63",
     "opentelemetry-exporter-otlp>=1.40.0",
+    "pydantic-settings>=2.11.0",
     "pypdf>=6.10.2",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.17.1",

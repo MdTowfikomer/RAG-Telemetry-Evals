@@ -1,62 +1,30 @@
 import json
-import os
 from typing import AsyncGenerator, List
 
-from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from langchain_huggingface import HuggingFaceEmbeddings as LCHuggingFaceEmbeddings
-from langchain_qdrant import QdrantVectorStore
-
-# Tracing imports
-from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, SecretStr
-from qdrant_client import QdrantClient
 
 from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRetriever
-from backend.core import RAGPipeline
+from backend.core import InfrastructureFactory, RAGPipeline, Settings
+
+try:
+    from evaluation import EvalContext, RagasEvaluator
+except ImportError:
+    from .evaluation import EvalContext, RagasEvaluator
 
 
-from .evaluation import EvalContext, RagasEvaluator
+settings = Settings()
+factory = InfrastructureFactory(settings)
+factory.setup_tracing(service_name="rag-backend")
 
+if settings.openrouter_api_key is None:
+    raise RuntimeError("OPENROUTER_API_KEY is required")
 
-# Load env
-load_dotenv()
-
-# Config
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION_NAME = "rag_collection"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-PHOENIX_URL = os.getenv("PHOENIX_URL", "http://localhost:6006/v1/traces")
-
-# OpenRouter / OpenAI Config
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
-RAGAS_EVAL_MODEL = os.getenv("RAGAS_EVAL_MODEL", "openai/gpt-4o-mini")
-
-
-def get_openrouter_api_key() -> SecretStr:
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY not set")
-    return SecretStr(OPENROUTER_API_KEY)
-
-
-def setup_tracing():
-    print(f"Setting up tracing to Phoenix at {PHOENIX_URL}...")
-    resource = Resource(attributes={"service.name": "rag-backend"})
-    exporter = OTLPSpanExporter(endpoint=PHOENIX_URL)
-    tracer_provider = TracerProvider(resource=resource)
-    tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-    otel_trace.set_tracer_provider(tracer_provider)
-    LangChainInstrumentor().instrument()
-
+openrouter_api_key = settings.openrouter_api_key
 
 app = FastAPI(title="Modular RAG API")
 
@@ -69,16 +37,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize components
-setup_tracing()
 tracer = otel_trace.get_tracer(__name__)
-embeddings = LCHuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-client = QdrantClient(url=QDRANT_URL)
-vectorstore = QdrantVectorStore(
-    client=client,
-    collection_name=COLLECTION_NAME,
-    embedding=embeddings,
-)
+embeddings = factory.get_embeddings()
+vectorstore = factory.get_vectorstore()
 
 retriever_adapter = QdrantRetriever(vectorstore=vectorstore, tracer=tracer)
 reranker_adapter = PassThroughReranker(tracer=tracer)
@@ -86,8 +47,12 @@ reranker_adapter = PassThroughReranker(tracer=tracer)
 pipeline_cache: dict[str, RAGPipeline] = {}
 
 
+def get_openrouter_api_key() -> SecretStr:
+    return openrouter_api_key
+
+
 def get_pipeline_for_model(model: str | None) -> RAGPipeline:
-    selected_model = model or OPENROUTER_MODEL
+    selected_model = model or settings.openrouter_model
     cached = pipeline_cache.get(selected_model)
     if cached is not None:
         return cached
@@ -110,8 +75,8 @@ def get_pipeline_for_model(model: str | None) -> RAGPipeline:
 
 
 evaluator = RagasEvaluator(
-    api_key=get_openrouter_api_key().get_secret_value(),
-    eval_model=RAGAS_EVAL_MODEL,
+    api_key=openrouter_api_key.get_secret_value(),
+    eval_model=settings.ragas_eval_model,
     embeddings=embeddings,
 )
 
@@ -120,7 +85,7 @@ evaluator = RagasEvaluator(
 class ChatRequest(BaseModel):
     query: str
     k: int = 3
-    model: str = OPENROUTER_MODEL
+    model: str = settings.openrouter_model
 
 
 class ChatResponse(BaseModel):
@@ -173,9 +138,6 @@ async def root():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks):
-    if not OPENROUTER_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not set")
-
     try:
         with tracer.start_as_current_span("chat_flow") as span:
             span.set_attribute("chat.query", request.query)
@@ -215,7 +177,7 @@ async def context_endpoint(request: ChatRequest):
 
 @app.get("/chat/stream")
 async def chat_stream_get_endpoint(
-    query: str, k: int = 3, model: str = OPENROUTER_MODEL
+    query: str, k: int = 3, model: str = settings.openrouter_model
 ):
     return StreamingResponse(
         sse_stream_response(query=query, k=k, model=model),

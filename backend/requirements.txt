@@ -16,5 +16,6 @@ arize-phoenix
 uvicorn
 fastapi
 pydantic
+pydantic-settings
 ragas
 datasets
