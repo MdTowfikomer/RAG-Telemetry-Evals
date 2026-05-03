@@ -1,17 +1,12 @@
-import asyncio
 import json
 import os
-from typing import List
+from typing import AsyncGenerator, List
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
 from langchain_huggingface import HuggingFaceEmbeddings as LCHuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
 from langchain_qdrant import QdrantVectorStore
 
 # Tracing imports
@@ -24,10 +19,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, SecretStr
 from qdrant_client import QdrantClient
-try:
-    from evaluation import EvalContext, RagasEvaluator
-except ImportError:
-    from .evaluation import EvalContext, RagasEvaluator
+
+from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRetriever
+from backend.core import RAGPipeline
+
+
+from .evaluation import EvalContext, RagasEvaluator
 
 
 # Load env
@@ -83,16 +80,39 @@ vectorstore = QdrantVectorStore(
     embedding=embeddings,
 )
 
+retriever_adapter = QdrantRetriever(vectorstore=vectorstore, tracer=tracer)
+reranker_adapter = PassThroughReranker(tracer=tracer)
+
+pipeline_cache: dict[str, RAGPipeline] = {}
+
+
+def get_pipeline_for_model(model: str | None) -> RAGPipeline:
+    selected_model = model or OPENROUTER_MODEL
+    cached = pipeline_cache.get(selected_model)
+    if cached is not None:
+        return cached
+
+    generator_adapter = OpenRouterGenerator(
+        api_key_provider=get_openrouter_api_key,
+        default_model=selected_model,
+        tracer=tracer,
+    )
+
+    pipeline = RAGPipeline(
+        retriever=retriever_adapter,
+        reranker=reranker_adapter,
+        generator=generator_adapter,
+        tracer=tracer,
+    )
+
+    pipeline_cache[selected_model] = pipeline
+    return pipeline
+
+
 evaluator = RagasEvaluator(
-    api_key=str(get_openrouter_api_key()),
+    api_key=get_openrouter_api_key().get_secret_value(),
     eval_model=RAGAS_EVAL_MODEL,
     embeddings=embeddings,
-)
-
-llm = ChatOpenAI(
-    api_key=get_openrouter_api_key(),
-    base_url="https://openrouter.ai/api/v1",
-    model=OPENROUTER_MODEL,
 )
 
 
@@ -114,112 +134,36 @@ class ContextResponse(BaseModel):
     source_documents: List[str]
 
 
-class RAGService:
-    @staticmethod
-    def retrieve(query: str, k: int = 3) -> List:
-        with tracer.start_as_current_span("retrieve") as span:
-            print(f"Retrieving for: {query} with k={k}")
-            docs = vectorstore.similarity_search(query, k=k)
-            span.set_attribute("retrieval.k", k)
-            span.set_attribute("retrieval.num_docs", len(docs))
-            return docs
+async def evaluate_ragas(
+    query: str, answer: str, contexts: List[str], parent_context=None
+):
+    """
+    Background task to compute Ragas metrics using the Evaluation Engine Service.
+    """
+    if parent_context:
+        otel_context.attach(parent_context)
 
-    @staticmethod
-    def rerank(query: str, docs: List) -> List:
-        with tracer.start_as_current_span("rerank") as span:
-            print(f"Reranking {len(docs)} docs...")
-            # Placeholder: just return docs
-            span.set_attribute("rerank.num_docs", len(docs))
-            return docs
-
-    @staticmethod
-    async def evaluate_ragas(
-        query: str, answer: str, contexts: List[str], parent_context=None
-    ):
-        """
-        Background task to compute Ragas metrics using the Evaluation Engine Service.
-        """
-        if parent_context:
-            otel_context.attach(parent_context)
-
-        try:
-            print("Delegating to Evaluation Engine Service...")
-            await evaluator.evaluate(EvalContext(
-                query=query,
-                answer=answer,
-                contexts=contexts
-            ))
-        except Exception as e:
-            print(f"Error in Ragas evaluation delegation: {e}")
-
-    @staticmethod
-    def generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
-        with tracer.start_as_current_span("generate") as span:
-            print(f"Generating response with model={model}...")
-            context_text = "\n\n".join([doc.page_content for doc in context_docs])
-
-            prompt = ChatPromptTemplate.from_template("""
-            Answer the following question based ONLY on the provided context.
-            If the answer is not in the context, say that you don't know.
-
-            Context:
-            {context}
-
-            Question: {question}
-            """)
-
-            # Dynamically set the model
-            current_llm = ChatOpenAI(
-                api_key=get_openrouter_api_key(),
-                base_url="https://openrouter.ai/api/v1",
-                model=model,
-            )
-
-            chain = (
-                {"context": lambda x: context_text, "question": RunnablePassthrough()}
-                | prompt
-                | current_llm
-                | StrOutputParser()
-            )
-
-            res = chain.invoke(query)
-            span.set_attribute("generation.model", model)
-            return res
-
-    @staticmethod
-    async def astream_generate(
-        query: str, context_docs: List, model: str = OPENROUTER_MODEL
-    ):
-        # Note: Tracing a stream is more complex, keeping it simple for now
-        context_text = "\n\n".join([doc.page_content for doc in context_docs])
-
-        prompt = ChatPromptTemplate.from_template("""
-            Answer the following question based ONLY on the provided context.
-            If the answer is not in the context, say that you don't know.
-
-            Context:{context}
-            Question: {question}
-            """)
-
-        current_llm = ChatOpenAI(
-            api_key=get_openrouter_api_key(),
-            base_url="https://openrouter.ai/api/v1",
-            model=model,
+    try:
+        print("Delegating to Evaluation Engine Service...")
+        await evaluator.evaluate(
+            EvalContext(query=query, answer=answer, contexts=contexts)
         )
+    except Exception as e:
+        print(f"Error in Ragas evaluation delegation: {e}")
 
-        chain = (
-            {"context": lambda x: context_text, "question": RunnablePassthrough()}
-            | prompt
-            | current_llm
-            | StrOutputParser()
-        )
 
-        async for chunk in chain.astream(query):
-            payload = json.dumps({"token": chunk})
-            yield f"data: {payload}\n\n"
-            await asyncio.sleep(0.01)  # Tiny delay for smoother UI streaming
+async def sse_stream_response(
+    query: str,
+    k: int,
+    model: str,
+) -> AsyncGenerator[str, None]:
+    pipeline = get_pipeline_for_model(model)
 
-        yield "data: [DONE]\n\n"
+    async for token in pipeline.stream(query, k=k):
+        payload = json.dumps({"token": token})
+        yield f"data: {payload}\n\n"
+
+    yield "data: [DONE]\n\n"
 
 
 @app.get("/")
@@ -235,22 +179,13 @@ async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks)
     try:
         with tracer.start_as_current_span("chat_flow") as span:
             span.set_attribute("chat.query", request.query)
-            # Step 1: Retrieve
-            docs = RAGService.retrieve(request.query, k=request.k)
+            pipeline = get_pipeline_for_model(request.model)
+            answer, docs = await pipeline.execute(request.query, k=request.k)
+            contexts = [doc.page_content for doc in docs]
 
-            # Step 2: Rerank
-            reranked_docs = RAGService.rerank(request.query, docs)
-
-            # Step 3: Generate
-            answer = RAGService.generate(
-                request.query, reranked_docs, model=request.model
-            )
-
-            # Step 4: Trigger Evals in background
-            contexts = [doc.page_content for doc in reranked_docs]
             current_context = otel_context.get_current()
             background_tasks.add_task(
-                RAGService.evaluate_ragas,
+                evaluate_ragas,
                 request.query,
                 answer,
                 contexts,
@@ -269,12 +204,12 @@ async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks)
 
 @app.post("/context", response_model=ContextResponse)
 async def context_endpoint(request: ChatRequest):
-    docs = RAGService.retrieve(request.query, k=request.k)
-    reranked_docs = RAGService.rerank(request.query, docs)
+    pipeline = get_pipeline_for_model(request.model)
+    docs = await pipeline.prepare_context(request.query, k=request.k)
 
     return ContextResponse(
         query=request.query,
-        source_documents=[doc.page_content for doc in reranked_docs],
+        source_documents=[doc.page_content for doc in docs],
     )
 
 
@@ -282,22 +217,16 @@ async def context_endpoint(request: ChatRequest):
 async def chat_stream_get_endpoint(
     query: str, k: int = 3, model: str = OPENROUTER_MODEL
 ):
-    docs = RAGService.retrieve(query, k=k)
-    reranked_docs = RAGService.rerank(query, docs)
-
     return StreamingResponse(
-        RAGService.astream_generate(query, reranked_docs, model=model),
+        sse_stream_response(query=query, k=k, model=model),
         media_type="text/event-stream",
     )
 
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest):
-    docs = RAGService.retrieve(request.query, k=request.k)
-    reranked_docs = RAGService.rerank(request.query, docs)
-
     return StreamingResponse(
-        RAGService.astream_generate(request.query, reranked_docs, model=request.model),
+        sse_stream_response(query=request.query, k=request.k, model=request.model),
         media_type="text/event-stream",
     )
 
