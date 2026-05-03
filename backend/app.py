@@ -1,10 +1,8 @@
 import asyncio
 import json
-import math
 import os
-from typing import Any, List, Sequence, cast
+from typing import List
 
-from datasets import Dataset
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +13,6 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_huggingface import HuggingFaceEmbeddings as LCHuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_qdrant import QdrantVectorStore
-from openai import OpenAI
 
 # Tracing imports
 from openinference.instrumentation.langchain import LangChainInstrumentor
@@ -27,12 +24,11 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, SecretStr
 from qdrant_client import QdrantClient
-from ragas import evaluate
-from ragas.embeddings.base import LangchainEmbeddingsWrapper
-from ragas.llms import llm_factory
-from ragas.metrics import AnswerRelevancy, Faithfulness
-from ragas.metrics.base import Metric
-from ragas.run_config import RunConfig
+try:
+    from evaluation import EvalContext, RagasEvaluator
+except ImportError:
+    from .evaluation import EvalContext, RagasEvaluator
+
 
 # Load env
 load_dotenv()
@@ -87,6 +83,12 @@ vectorstore = QdrantVectorStore(
     embedding=embeddings,
 )
 
+evaluator = RagasEvaluator(
+    api_key=str(get_openrouter_api_key()),
+    eval_model=RAGAS_EVAL_MODEL,
+    embeddings=embeddings,
+)
+
 llm = ChatOpenAI(
     api_key=get_openrouter_api_key(),
     base_url="https://openrouter.ai/api/v1",
@@ -131,85 +133,24 @@ class RAGService:
             return docs
 
     @staticmethod
-    def evaluate_ragas(
+    async def evaluate_ragas(
         query: str, answer: str, contexts: List[str], parent_context=None
     ):
         """
-        Background task to compute Ragas metrics and log them to Phoenix.
+        Background task to compute Ragas metrics using the Evaluation Engine Service.
         """
         if parent_context:
             otel_context.attach(parent_context)
 
-        with tracer.start_as_current_span("ragas_evaluation") as span:
-            try:
-                print("Starting Ragas evaluation...")
-
-                # Prepare data with compatible schema
-                dataset = Dataset.from_dict(
-                    {
-                        "question": [query],
-                        "answer": [answer],
-                        "contexts": [contexts],
-                    }
-                )
-
-                # Setup modern Ragas judge LLM + embeddings
-                judge_client = OpenAI(
-                    api_key=get_openrouter_api_key().get_secret_value(),
-                    base_url="https://openrouter.ai/api/v1",
-                )
-                ragas_llm = llm_factory(
-                    RAGAS_EVAL_MODEL,
-                    provider="openai",
-                    client=judge_client,
-                )
-                # Note: LangchainEmbeddingsWrapper is required for compatibility with 
-                # stable metrics in Ragas 0.4.3 despite the deprecation warning.
-                ragas_embeddings = LangchainEmbeddingsWrapper(embeddings=embeddings)
-
-                metrics: Sequence[Metric] = cast(
-                    Sequence[Metric],
-                    [
-                        Faithfulness(llm=ragas_llm),
-                        AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
-                    ],
-                )
-
-                # Run evaluation
-                result = evaluate(
-                    dataset=dataset,
-                    metrics=metrics,
-                    run_config=RunConfig(timeout=45, max_retries=1, max_workers=2),
-                    raise_exceptions=False,
-                    show_progress=True,
-                )
-
-                # Extract scores
-                result_df = cast(Any, result).to_pandas()
-                f_score = float(result_df.loc[0, "faithfulness"])
-                r_score = float(result_df.loc[0, "answer_relevancy"])
-
-                if math.isnan(f_score) or math.isnan(r_score):
-                    print(
-                        "Ragas returned NaN scores. This usually means the eval model does not support required JSON/instructor mode. "
-                        f"Current RAGAS_EVAL_MODEL={RAGAS_EVAL_MODEL}"
-                    )
-                    span.set_attribute("ragas.nan_scores", True)
-                    span.set_attribute("ragas.eval_model", RAGAS_EVAL_MODEL)
-                    return
-
-                # Log to Phoenix as span attributes
-                span.set_attribute("ragas.faithfulness", f_score)
-                span.set_attribute("ragas.answer_relevancy", r_score)
-                span.set_attribute("ragas.eval_model", RAGAS_EVAL_MODEL)
-
-                print(
-                    f"Ragas Evals Complete: Faithfulness={f_score:.2f}, Relevancy={r_score:.2f}, EvalModel={RAGAS_EVAL_MODEL}"
-                )
-
-            except Exception as e:
-                print(f"Error in Ragas evaluation: {e}")
-                span.record_exception(e)
+        try:
+            print("Delegating to Evaluation Engine Service...")
+            await evaluator.evaluate(EvalContext(
+                query=query,
+                answer=answer,
+                contexts=contexts
+            ))
+        except Exception as e:
+            print(f"Error in Ragas evaluation delegation: {e}")
 
     @staticmethod
     def generate(query: str, context_docs: List, model: str = OPENROUTER_MODEL):
