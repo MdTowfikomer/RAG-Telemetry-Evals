@@ -8,8 +8,10 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from qdrant_client import QdrantClient
+from sqlmodel import Session, SQLModel, create_engine
 
 from .config import Settings
+from .models import ChatMessage, ChatSession  # Ensure models are registered
 
 
 class InfrastructureFactory:
@@ -18,6 +20,7 @@ class InfrastructureFactory:
         self._embeddings = None
         self._qdrant_client = None
         self._vectorstore = None
+        self._engine = None
         self._tracing_initialized = False
 
     def setup_tracing(self, service_name: str) -> None:
@@ -60,3 +63,18 @@ class InfrastructureFactory:
             base_url="https://openrouter.ai/api/v1",
             model=selected_model,
         )
+
+    def get_engine(self):
+        if self._engine is None:
+            connect_args = {"check_same_thread": False}
+            self._engine = create_engine(
+                self.settings.database_url, echo=False, connect_args=connect_args
+            )
+        return self._engine
+
+    def init_db(self):
+        SQLModel.metadata.create_all(self.get_engine())
+
+    def get_session(self):
+        with Session(self.get_engine()) as session:
+            yield session

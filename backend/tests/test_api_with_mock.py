@@ -3,14 +3,34 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from backend.app import app
+from backend.app import app, factory, get_db
 from backend.app import evaluator as real_evaluator
-from backend.core import Document
+from backend.core import Document, Settings
+from backend.core.models import ChatMessage, ChatSession
 from backend.evaluation import MockEvaluator
-
+from sqlmodel import SQLModel, Session, create_engine
+from sqlalchemy.pool import StaticPool
 
 class TestAPIWithMockEvaluator(unittest.TestCase):
     def setUp(self):
+        # Override settings for testing
+        self.settings = Settings(
+            database_url="sqlite:///:memory:",
+            openrouter_api_key="test-key"
+        )
+        self.engine = create_engine(
+            "sqlite:///:memory:", 
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(self.engine)
+        
+        def override_get_db():
+            with Session(self.engine) as session:
+                yield session
+
+        app.dependency_overrides[get_db] = override_get_db
+
         self.client = TestClient(app)
         self.mock_evaluator = MockEvaluator(
             scores={"faithfulness": 0.95, "answer_relevancy": 0.9}

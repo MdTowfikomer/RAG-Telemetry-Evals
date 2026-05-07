@@ -22,4 +22,5 @@ dependencies = [
     "ragas>=0.4.3",
     "requests>=2.33.1",
     "sentence-transformers>=5.4.1",
+    "sqlmodel>=0.0.38",
 ]

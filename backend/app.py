@@ -1,15 +1,23 @@
 import json
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional
+from uuid import UUID
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
 from pydantic import BaseModel, SecretStr
+from sqlmodel import Session, select
 
 from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRetriever
-from backend.core import InfrastructureFactory, RAGPipeline, Settings
+from backend.core import (
+    ChatMessage,
+    ChatSession,
+    InfrastructureFactory,
+    RAGPipeline,
+    Settings,
+)
 
 try:
     from evaluation import EvalContext, RagasEvaluator
@@ -27,6 +35,15 @@ if settings.openrouter_api_key is None:
 openrouter_api_key = settings.openrouter_api_key
 
 app = FastAPI(title="Modular RAG API")
+
+
+@app.on_event("startup")
+def on_startup():
+    factory.init_db()
+
+
+def get_db():
+    yield from factory.get_session()
 
 # Configure CORS
 app.add_middleware(
@@ -84,11 +101,14 @@ evaluator = RagasEvaluator(
 # Models
 class ChatRequest(BaseModel):
     query: str
+    session_id: Optional[UUID] = None
     k: int = 3
     model: str = settings.openrouter_model
 
 
 class ChatResponse(BaseModel):
+    id: UUID
+    session_id: UUID
     query: str
     response: str
     source_documents: List[str]
@@ -137,14 +157,48 @@ async def root():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks):
+async def chat_endpoint(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     try:
         with tracer.start_as_current_span("chat_flow") as span:
             span.set_attribute("chat.query", request.query)
+
+            # 1. Get or Create Session
+            if request.session_id:
+                session = db.get(ChatSession, request.session_id)
+                if not session:
+                    raise HTTPException(status_code=404, detail="Session not found")
+            else:
+                session = ChatSession(title=request.query[:50] + "...")
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+
+            # 2. Persist User Message
+            user_msg = ChatMessage(
+                session_id=session.id, role="user", content=request.query
+            )
+            db.add(user_msg)
+            db.commit()
+            db.refresh(user_msg)
+
+            # 3. Execute RAG Pipeline
             pipeline = get_pipeline_for_model(request.model)
             answer, docs = await pipeline.execute(request.query, k=request.k)
             contexts = [doc.page_content for doc in docs]
 
+            # 4. Persist Assistant Message
+            assistant_msg = ChatMessage(
+                session_id=session.id, role="assistant", content=answer
+            )
+            db.add(assistant_msg)
+            db.commit()
+            db.refresh(assistant_msg)
+
+            # 5. Trigger Async Evaluation
             current_context = otel_context.get_current()
             background_tasks.add_task(
                 evaluate_ragas,
@@ -155,10 +209,14 @@ async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks)
             )
 
             return ChatResponse(
+                id=assistant_msg.id,
+                session_id=session.id,
                 query=request.query,
                 response=answer,
                 source_documents=contexts,
             )
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
