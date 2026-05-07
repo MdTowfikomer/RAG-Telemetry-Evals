@@ -1,4 +1,6 @@
+import asyncio
 import json
+from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 from uuid import UUID
 
@@ -44,6 +46,7 @@ def on_startup():
 
 def get_db():
     yield from factory.get_session()
+
 
 # Configure CORS
 app.add_middleware(
@@ -137,16 +140,78 @@ async def evaluate_ragas(
         print(f"Error in Ragas evaluation delegation: {e}")
 
 
+async def persist_assistant_message(
+    assistant_message_id: UUID,
+    content: str,
+    db_bind,
+) -> None:
+    with Session(db_bind) as persistence_db:
+        assistant_msg = persistence_db.get(ChatMessage, assistant_message_id)
+        if assistant_msg is None:
+            return
+
+        assistant_msg.content = content
+        persistence_db.add(assistant_msg)
+
+        session = persistence_db.get(ChatSession, assistant_msg.session_id)
+        if session is not None:
+            session.updated_at = datetime.utcnow()
+            persistence_db.add(session)
+
+        persistence_db.commit()
+
+
+async def evaluate_ragas_for_stream(
+    query: str, answer: str, k: int, model: str
+) -> None:
+    try:
+        pipeline = get_pipeline_for_model(model)
+        docs = await pipeline.prepare_context(query, k=k)
+        contexts = [doc.page_content for doc in docs]
+        await evaluate_ragas(query, answer, contexts)
+    except Exception as e:
+        print(f"Error in streaming evaluation delegation: {e}")
+
+
 async def sse_stream_response(
     query: str,
     k: int,
     model: str,
+    session_id: UUID,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    db_bind,
 ) -> AsyncGenerator[str, None]:
     pipeline = get_pipeline_for_model(model)
+    generated_tokens: list[str] = []
 
-    async for token in pipeline.stream(query, k=k):
-        payload = json.dumps({"token": token})
-        yield f"data: {payload}\n\n"
+    stream_meta_payload = json.dumps(
+        {
+            "type": "meta",
+            "session_id": str(session_id),
+            "user_message_id": str(user_message_id),
+            "assistant_message_id": str(assistant_message_id),
+        }
+    )
+    yield f"data: {stream_meta_payload}\n\n"
+
+    try:
+        async for token in pipeline.stream(query, k=k):
+            generated_tokens.append(token)
+            payload = json.dumps({"type": "token", "token": token})
+            yield f"data: {payload}\n\n"
+    finally:
+        final_answer = "".join(generated_tokens)
+        await persist_assistant_message(
+            assistant_message_id=assistant_message_id,
+            content=final_answer,
+            db_bind=db_bind,
+        )
+
+        if final_answer.strip():
+            asyncio.create_task(
+                evaluate_ragas_for_stream(query, final_answer, k, model)
+            )
 
     yield "data: [DONE]\n\n"
 
@@ -233,20 +298,82 @@ async def context_endpoint(request: ChatRequest):
     )
 
 
+def prepare_stream_messages(
+    db: Session,
+    query: str,
+    session_id: Optional[UUID],
+) -> tuple[ChatSession, ChatMessage, ChatMessage]:
+    if session_id:
+        session = db.get(ChatSession, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        session = ChatSession(title=query[:50] + "...")
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+    user_msg = ChatMessage(session_id=session.id, role="user", content=query)
+    assistant_msg = ChatMessage(session_id=session.id, role="assistant", content="")
+    db.add(user_msg)
+    db.add(assistant_msg)
+
+    session.updated_at = datetime.utcnow()
+    db.add(session)
+
+    db.commit()
+    db.refresh(user_msg)
+    db.refresh(assistant_msg)
+
+    return session, user_msg, assistant_msg
+
+
 @app.get("/chat/stream")
 async def chat_stream_get_endpoint(
-    query: str, k: int = 3, model: str = settings.openrouter_model
+    query: str,
+    k: int = 3,
+    model: str = settings.openrouter_model,
+    session_id: Optional[UUID] = None,
+    db: Session = Depends(get_db),
 ):
+    session, user_msg, assistant_msg = prepare_stream_messages(
+        db=db,
+        query=query,
+        session_id=session_id,
+    )
+
     return StreamingResponse(
-        sse_stream_response(query=query, k=k, model=model),
+        sse_stream_response(
+            query=query,
+            k=k,
+            model=model,
+            session_id=session.id,
+            user_message_id=user_msg.id,
+            assistant_message_id=assistant_msg.id,
+            db_bind=db.get_bind(),
+        ),
         media_type="text/event-stream",
     )
 
 
 @app.post("/chat/stream")
-async def chat_stream_endpoint(request: ChatRequest):
+async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
+    session, user_msg, assistant_msg = prepare_stream_messages(
+        db=db,
+        query=request.query,
+        session_id=request.session_id,
+    )
+
     return StreamingResponse(
-        sse_stream_response(query=request.query, k=request.k, model=request.model),
+        sse_stream_response(
+            query=request.query,
+            k=request.k,
+            model=request.model,
+            session_id=session.id,
+            user_message_id=user_msg.id,
+            assistant_message_id=assistant_msg.id,
+            db_bind=db.get_bind(),
+        ),
         media_type="text/event-stream",
     )
 

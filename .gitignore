@@ -16,5 +16,6 @@ qdrant_storage/
 # HuggingFace model cache
 .cache/
 
-
-FRONTEND_PLAN.md
+# Local RAG workbench
+rag_workbench.db
+data/
