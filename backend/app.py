@@ -1,6 +1,7 @@
 import asyncio
 import json
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import AsyncGenerator, List, Optional
 from uuid import UUID
 
@@ -16,9 +17,15 @@ from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRet
 from backend.core import (
     ChatMessage,
     ChatSession,
+    Evaluation,
     InfrastructureFactory,
     RAGPipeline,
     Settings,
+)
+from backend.core.evaluation_store import (
+    create_pending_evaluation,
+    mark_evaluation_completed,
+    mark_evaluation_failed,
 )
 
 try:
@@ -36,12 +43,14 @@ if settings.openrouter_api_key is None:
 
 openrouter_api_key = settings.openrouter_api_key
 
-app = FastAPI(title="Modular RAG API")
 
-
-@app.on_event("startup")
-def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     factory.init_db()
+    yield
+
+
+app = FastAPI(title="Modular RAG API", lifespan=lifespan)
 
 
 def get_db():
@@ -122,8 +131,28 @@ class ContextResponse(BaseModel):
     source_documents: List[str]
 
 
+class SessionSummaryResponse(BaseModel):
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionMessageResponse(BaseModel):
+    id: UUID
+    session_id: UUID
+    role: str
+    content: str
+    created_at: datetime
+
+
 async def evaluate_ragas(
-    query: str, answer: str, contexts: List[str], parent_context=None
+    query: str,
+    answer: str,
+    contexts: List[str],
+    evaluation_id: UUID,
+    db_bind,
+    parent_context=None,
 ):
     """
     Background task to compute Ragas metrics using the Evaluation Engine Service.
@@ -133,10 +162,25 @@ async def evaluate_ragas(
 
     try:
         print("Delegating to Evaluation Engine Service...")
-        await evaluator.evaluate(
+        scores = await evaluator.evaluate(
             EvalContext(query=query, answer=answer, contexts=contexts)
         )
+
+        with Session(db_bind) as evaluation_db:
+            mark_evaluation_completed(
+                db=evaluation_db,
+                evaluation_id=evaluation_id,
+                faithfulness=scores.get("faithfulness"),
+                answer_relevancy=scores.get("answer_relevancy"),
+            )
     except Exception as e:
+        with Session(db_bind) as evaluation_db:
+            mark_evaluation_failed(
+                db=evaluation_db,
+                evaluation_id=evaluation_id,
+                error_message=str(e),
+            )
+
         print(f"Error in Ragas evaluation delegation: {e}")
 
 
@@ -155,20 +199,31 @@ async def persist_assistant_message(
 
         session = persistence_db.get(ChatSession, assistant_msg.session_id)
         if session is not None:
-            session.updated_at = datetime.utcnow()
+            session.updated_at = datetime.now(UTC)
             persistence_db.add(session)
 
         persistence_db.commit()
 
 
 async def evaluate_ragas_for_stream(
-    query: str, answer: str, k: int, model: str
+    query: str,
+    answer: str,
+    k: int,
+    model: str,
+    evaluation_id: UUID,
+    db_bind,
 ) -> None:
     try:
         pipeline = get_pipeline_for_model(model)
         docs = await pipeline.prepare_context(query, k=k)
         contexts = [doc.page_content for doc in docs]
-        await evaluate_ragas(query, answer, contexts)
+        await evaluate_ragas(
+            query=query,
+            answer=answer,
+            contexts=contexts,
+            evaluation_id=evaluation_id,
+            db_bind=db_bind,
+        )
     except Exception as e:
         print(f"Error in streaming evaluation delegation: {e}")
 
@@ -181,6 +236,7 @@ async def sse_stream_response(
     user_message_id: UUID,
     assistant_message_id: UUID,
     db_bind,
+    evaluation_id: UUID,
 ) -> AsyncGenerator[str, None]:
     pipeline = get_pipeline_for_model(model)
     generated_tokens: list[str] = []
@@ -210,7 +266,14 @@ async def sse_stream_response(
 
         if final_answer.strip():
             asyncio.create_task(
-                evaluate_ragas_for_stream(query, final_answer, k, model)
+                evaluate_ragas_for_stream(
+                    query=query,
+                    answer=final_answer,
+                    k=k,
+                    model=model,
+                    evaluation_id=evaluation_id,
+                    db_bind=db_bind,
+                )
             )
 
     yield "data: [DONE]\n\n"
@@ -263,13 +326,20 @@ async def chat_endpoint(
             db.commit()
             db.refresh(assistant_msg)
 
-            # 5. Trigger Async Evaluation
+            # 5. Create Evaluation record and trigger async evaluation
+            evaluation_record = create_pending_evaluation(
+                db=db,
+                message_id=assistant_msg.id,
+            )
+
             current_context = otel_context.get_current()
             background_tasks.add_task(
                 evaluate_ragas,
                 request.query,
                 answer,
                 contexts,
+                evaluation_record.id,
+                db.get_bind(),
                 current_context,
             )
 
@@ -298,11 +368,52 @@ async def context_endpoint(request: ChatRequest):
     )
 
 
+@app.get("/sessions", response_model=List[SessionSummaryResponse])
+async def list_sessions(db: Session = Depends(get_db)):
+    sessions = db.exec(
+        select(ChatSession).order_by(ChatSession.created_at.desc())
+    ).all()
+
+    return [
+        SessionSummaryResponse(
+            id=session.id,
+            title=session.title,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+        for session in sessions
+    ]
+
+
+@app.get("/sessions/{session_id}/messages", response_model=List[SessionMessageResponse])
+async def get_session_messages(session_id: UUID, db: Session = Depends(get_db)):
+    session = db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = db.exec(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc())
+    ).all()
+
+    return [
+        SessionMessageResponse(
+            id=message.id,
+            session_id=message.session_id,
+            role=message.role,
+            content=message.content,
+            created_at=message.created_at,
+        )
+        for message in messages
+    ]
+
+
 def prepare_stream_messages(
     db: Session,
     query: str,
     session_id: Optional[UUID],
-) -> tuple[ChatSession, ChatMessage, ChatMessage]:
+) -> tuple[ChatSession, ChatMessage, ChatMessage, Evaluation]:
     if session_id:
         session = db.get(ChatSession, session_id)
         if not session:
@@ -318,14 +429,19 @@ def prepare_stream_messages(
     db.add(user_msg)
     db.add(assistant_msg)
 
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(UTC)
     db.add(session)
 
     db.commit()
     db.refresh(user_msg)
     db.refresh(assistant_msg)
 
-    return session, user_msg, assistant_msg
+    evaluation_record = create_pending_evaluation(
+        db=db,
+        message_id=assistant_msg.id,
+    )
+
+    return session, user_msg, assistant_msg, evaluation_record
 
 
 @app.get("/chat/stream")
@@ -336,7 +452,7 @@ async def chat_stream_get_endpoint(
     session_id: Optional[UUID] = None,
     db: Session = Depends(get_db),
 ):
-    session, user_msg, assistant_msg = prepare_stream_messages(
+    session, user_msg, assistant_msg, evaluation_record = prepare_stream_messages(
         db=db,
         query=query,
         session_id=session_id,
@@ -351,6 +467,7 @@ async def chat_stream_get_endpoint(
             user_message_id=user_msg.id,
             assistant_message_id=assistant_msg.id,
             db_bind=db.get_bind(),
+            evaluation_id=evaluation_record.id,
         ),
         media_type="text/event-stream",
     )
@@ -358,7 +475,7 @@ async def chat_stream_get_endpoint(
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
-    session, user_msg, assistant_msg = prepare_stream_messages(
+    session, user_msg, assistant_msg, evaluation_record = prepare_stream_messages(
         db=db,
         query=request.query,
         session_id=request.session_id,
@@ -373,6 +490,7 @@ async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_d
             user_message_id=user_msg.id,
             assistant_message_id=assistant_msg.id,
             db_bind=db.get_bind(),
+            evaluation_id=evaluation_record.id,
         ),
         media_type="text/event-stream",
     )

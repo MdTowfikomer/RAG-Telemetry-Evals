@@ -1,4 +1,9 @@
-import type { ChatSettings, ContextDoc } from "../types";
+import type {
+  ChatSettings,
+  ContextDoc,
+  SessionMessage,
+  SessionSummary,
+} from "../types";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -19,6 +24,30 @@ type StreamMeta = {
 };
 
 export const api = {
+  async fetchSessions(): Promise<SessionSummary[]> {
+    const response = await fetch(`${API_BASE_URL}/sessions`);
+
+    if (!response.ok) {
+      throw new Error(`Sessions request failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as SessionSummary[];
+  },
+
+  async fetchSessionMessages(sessionId: string): Promise<SessionMessage[]> {
+    const response = await fetch(
+      `${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}/messages`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Session messages request failed with status ${response.status}`,
+      );
+    }
+
+    return (await response.json()) as SessionMessage[];
+  },
+
   async fetchContext(
     query: string,
     settings: ChatSettings,

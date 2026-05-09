@@ -19,3 +19,6 @@ qdrant_storage/
 # Local RAG workbench
 rag_workbench.db
 data/
+
+# Generated documentation
+ARCHITECTURE.md

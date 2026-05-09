@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { ChatMessage, ChatSettings, ContextDoc } from "../types";
+import type {
+  ChatMessage,
+  ChatSettings,
+  ContextDoc,
+  SessionSummary,
+} from "../types";
 
 const initialMessages: ChatMessage[] = [
   {
@@ -20,11 +25,20 @@ export function useChat(settings: ChatSettings) {
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const streamCleanupRef = useRef<(() => void) | null>(null);
   const sessionIdRef = useRef<string | null>(null);
 
+  const refreshSessions = async () => {
+    const nextSessions = await api.fetchSessions();
+    setSessions(nextSessions);
+  };
+
   useEffect(() => {
+    void refreshSessions();
+
     return () => {
       streamCleanupRef.current?.();
       streamCleanupRef.current = null;
@@ -36,9 +50,30 @@ export function useChat(settings: ChatSettings) {
     streamCleanupRef.current = null;
     setMessages(initialMessages);
     sessionIdRef.current = null;
+    setActiveSessionId(null);
     setContextDocs([]);
     setErrorMessage(null);
     setIsLoading(false);
+  };
+
+  const loadSession = async (sessionId: string) => {
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
+
+    setIsLoading(false);
+    setErrorMessage(null);
+
+    const sessionMessages = await api.fetchSessionMessages(sessionId);
+    const mappedMessages: ChatMessage[] = sessionMessages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+    }));
+
+    setMessages(mappedMessages.length > 0 ? mappedMessages : initialMessages);
+    sessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+    setContextDocs([]);
   };
 
   const sendMessage = async (queryText: string) => {
@@ -80,7 +115,8 @@ export function useChat(settings: ChatSettings) {
         (token) => {
           setMessages((previous) =>
             previous.map((message) =>
-              message.id === activeAssistantMessageId
+              message.id === activeAssistantMessageId ||
+              message.id === assistantMessageId
                 ? { ...message, content: `${message.content}${token}` }
                 : message,
             ),
@@ -98,7 +134,10 @@ export function useChat(settings: ChatSettings) {
 
           setMessages((previous) =>
             previous.map((message) => {
-              if (message.id !== activeAssistantMessageId) {
+              if (
+                message.id !== activeAssistantMessageId &&
+                message.id !== assistantMessageId
+              ) {
                 return message;
               }
 
@@ -120,6 +159,7 @@ export function useChat(settings: ChatSettings) {
         },
         (meta) => {
           sessionIdRef.current = meta.session_id;
+          setActiveSessionId(meta.session_id);
 
           setMessages((previous) =>
             previous.map((message) => {
@@ -142,6 +182,7 @@ export function useChat(settings: ChatSettings) {
       );
 
       streamCleanupRef.current = cleanup;
+      await refreshSessions();
     } catch (error) {
       const message =
         error instanceof Error
@@ -170,7 +211,11 @@ export function useChat(settings: ChatSettings) {
     contextDocs,
     isLoading,
     errorMessage,
+    sessions,
+    activeSessionId,
     sendMessage,
     clearChat,
+    loadSession,
+    refreshSessions,
   };
 }

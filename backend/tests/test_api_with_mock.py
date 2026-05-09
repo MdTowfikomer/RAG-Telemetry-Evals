@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from backend.app import app, factory, get_db
+from backend.app import app, get_db
 from backend.app import evaluator as real_evaluator
 from backend.core import Document, Settings
-from backend.core.models import ChatMessage, ChatSession
+from backend.core.models import ChatMessage, ChatSession, Evaluation
 from backend.evaluation import MockEvaluator
 
 
@@ -111,3 +111,38 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             self.assertEqual(assistant_messages[0].content, "RAG stream")
 
         mock_evaluate_ragas_for_stream.assert_called_once()
+
+    @patch("backend.app.get_pipeline_for_model")
+    def test_chat_flow_updates_evaluation_record_to_completed(
+        self,
+        mock_get_pipeline_for_model,
+    ):
+        mock_pipeline = AsyncMock()
+        mock_docs = [Document(page_content="RAG context", metadata={})]
+        mock_pipeline.execute.return_value = ("RAG answer", mock_docs)
+        mock_get_pipeline_for_model.return_value = mock_pipeline
+
+        response = self.client.post("/chat", json={"query": "Explain RAG"})
+
+        self.assertEqual(response.status_code, 200)
+
+        with Session(self.engine) as session:
+            assistant = session.exec(
+                select(ChatMessage)
+                .where(ChatMessage.role == "assistant")
+                .order_by(ChatMessage.created_at.desc())
+            ).first()
+
+            self.assertIsNotNone(assistant)
+
+            evaluations = session.exec(
+                select(Evaluation)
+                .where(Evaluation.message_id == assistant.id)
+                .order_by(Evaluation.version.asc())
+            ).all()
+
+            self.assertEqual(len(evaluations), 1)
+            self.assertEqual(evaluations[0].version, 1)
+            self.assertEqual(evaluations[0].status, "completed")
+            self.assertEqual(evaluations[0].faithfulness, 0.95)
+            self.assertEqual(evaluations[0].answer_relevancy, 0.9)

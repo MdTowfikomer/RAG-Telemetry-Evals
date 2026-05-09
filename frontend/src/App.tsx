@@ -20,8 +20,11 @@ function App() {
     contextDocs,
     isLoading,
     errorMessage,
+    sessions,
+    activeSessionId,
     sendMessage,
     clearChat,
+    loadSession,
   } = useChat(settings);
 
   const handleSendQuery = async () => {
@@ -33,7 +36,16 @@ function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto grid min-h-screen max-w-400 grid-cols-1 lg:grid-cols-[280px_1fr_360px]">
-        <LeftPane settings={settings} onSettingsChange={setSettings} />
+        <LeftPane
+          settings={settings}
+          onSettingsChange={setSettings}
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSelectSession={(sessionId) => {
+            void loadSession(sessionId);
+          }}
+          onNewChat={clearChat}
+        />
         <ChatPane
           messages={messages}
           isLoading={isLoading}
