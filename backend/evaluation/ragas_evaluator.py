@@ -1,8 +1,9 @@
 import math
-from typing import Dict, Sequence, Any, cast
+from typing import Any, Dict, Sequence, cast
+
 from datasets import Dataset
-from opentelemetry import trace as otel_trace
 from openai import OpenAI
+from opentelemetry import trace as otel_trace
 from ragas import evaluate
 from ragas.embeddings.base import LangchainEmbeddingsWrapper
 from ragas.llms import llm_factory
@@ -10,7 +11,8 @@ from ragas.metrics import AnswerRelevancy, Faithfulness
 from ragas.metrics.base import Metric
 from ragas.run_config import RunConfig
 
-from .interfaces import Evaluator, EvalContext
+from .interfaces import EvalContext, Evaluator
+
 
 class RagasEvaluator(Evaluator):
     def __init__(
@@ -51,11 +53,13 @@ class RagasEvaluator(Evaluator):
                     provider="openai",
                     client=judge_client,
                 )
-                
-                # Setup Ragas Embeddings
-                ragas_embeddings = LangchainEmbeddingsWrapper(embeddings=self.embeddings) # what does ragas_embeddings do?
 
-                metrics: Sequence[Metric] = cast( # Understand what these metrics do
+                # Setup Ragas Embeddings
+                ragas_embeddings = LangchainEmbeddingsWrapper(
+                    embeddings=self.embeddings
+                )  # what does ragas_embeddings do?
+
+                metrics: Sequence[Metric] = cast(  # Understand what these metrics do
                     Sequence[Metric],
                     [
                         Faithfulness(llm=ragas_llm),
@@ -79,12 +83,16 @@ class RagasEvaluator(Evaluator):
 
                 scores = {
                     "faithfulness": f_score,
-                    "answer_relevancy": r_score
+                    "answer_relevancy": r_score,
+                    "reasoning": (
+                        f"Faithfulness={f_score:.3f}, AnswerRelevancy={r_score:.3f}. "
+                        "Scores are computed by Ragas judges over retrieved contexts."
+                    ),
                 }
 
                 if math.isnan(f_score) or math.isnan(r_score):
                     span.set_attribute("ragas.nan_scores", True)
-                
+
                 # Log to Phoenix as span attributes
                 span.set_attribute("ragas.faithfulness", f_score)
                 span.set_attribute("ragas.answer_relevancy", r_score)

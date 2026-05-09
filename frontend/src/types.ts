@@ -1,7 +1,27 @@
+export interface MessageEvaluationVersion {
+  id: string;
+  messageId: string;
+  version: number;
+  status: "pending" | "completed" | "failed";
+  faithfulness?: number;
+  answerRelevancy?: number;
+  reasoning?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  latencyMs?: number;
+  tokenCount?: number;
+  faithfulness?: number;
+  answerRelevancy?: number;
+  reasoning?: string;
+  evaluationStatus?: "pending" | "completed" | "failed";
+  evaluationVersion?: number;
 }
 
 export interface ContextDoc {
@@ -29,6 +49,13 @@ export interface SessionMessage {
   session_id: string;
   role: "user" | "assistant";
   content: string;
+  latency_ms?: number | null;
+  token_count?: number | null;
+  faithfulness?: number | null;
+  answer_relevancy?: number | null;
+  reasoning?: string | null;
+  evaluation_status?: "pending" | "completed" | "failed" | null;
+  evaluation_version?: number | null;
   created_at: string;
 }
 

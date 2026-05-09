@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   ChatSettings,
   ContextDoc,
+  MessageEvaluationVersion,
   SessionSummary,
 } from "../types";
 
@@ -27,9 +28,17 @@ export function useChat(settings: ChatSettings) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
+    null,
+  );
+  const [evaluationHistory, setEvaluationHistory] = useState<
+    MessageEvaluationVersion[]
+  >([]);
 
   const streamCleanupRef = useRef<(() => void) | null>(null);
+  const scoresCleanupRef = useRef<(() => void) | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const assistantIdAliasRef = useRef<Record<string, string>>({});
 
   const refreshSessions = async () => {
     const nextSessions = await api.fetchSessions();
@@ -39,9 +48,58 @@ export function useChat(settings: ChatSettings) {
   useEffect(() => {
     void refreshSessions();
 
+    scoresCleanupRef.current = api.streamScores(
+      (event) => {
+        const aliasId = assistantIdAliasRef.current[event.message_id];
+
+        setMessages((previous) =>
+          previous.map((message) => {
+            if (message.id !== event.message_id && message.id !== aliasId) {
+              return message;
+            }
+
+            return {
+              ...message,
+              faithfulness:
+                typeof event.faithfulness === "number"
+                  ? event.faithfulness
+                  : message.faithfulness,
+              answerRelevancy:
+                typeof event.answer_relevancy === "number"
+                  ? event.answer_relevancy
+                  : message.answerRelevancy,
+              evaluationStatus: event.status ?? message.evaluationStatus,
+              evaluationVersion:
+                typeof event.version === "number"
+                  ? event.version
+                  : message.evaluationVersion,
+              reasoning:
+                typeof event.reasoning === "string"
+                  ? event.reasoning
+                  : message.reasoning,
+              latencyMs:
+                typeof event.latency_ms === "number"
+                  ? event.latency_ms
+                  : message.latencyMs,
+              tokenCount:
+                typeof event.token_count === "number"
+                  ? event.token_count
+                  : message.tokenCount,
+            };
+          }),
+        );
+      },
+      () => {
+        // Intentionally ignore score stream errors in UI state.
+      },
+    );
+
     return () => {
       streamCleanupRef.current?.();
       streamCleanupRef.current = null;
+
+      scoresCleanupRef.current?.();
+      scoresCleanupRef.current = null;
     };
   }, []);
 
@@ -50,8 +108,11 @@ export function useChat(settings: ChatSettings) {
     streamCleanupRef.current = null;
     setMessages(initialMessages);
     sessionIdRef.current = null;
+    assistantIdAliasRef.current = {};
     setActiveSessionId(null);
     setContextDocs([]);
+    setSelectedMessageId(null);
+    setEvaluationHistory([]);
     setErrorMessage(null);
     setIsLoading(false);
   };
@@ -68,12 +129,69 @@ export function useChat(settings: ChatSettings) {
       id: message.id,
       role: message.role,
       content: message.content,
+      latencyMs:
+        typeof message.latency_ms === "number" ? message.latency_ms : undefined,
+      tokenCount:
+        typeof message.token_count === "number"
+          ? message.token_count
+          : undefined,
+      faithfulness:
+        typeof message.faithfulness === "number"
+          ? message.faithfulness
+          : undefined,
+      answerRelevancy:
+        typeof message.answer_relevancy === "number"
+          ? message.answer_relevancy
+          : undefined,
+      reasoning:
+        typeof message.reasoning === "string" ? message.reasoning : undefined,
+      evaluationStatus: message.evaluation_status ?? undefined,
+      evaluationVersion:
+        typeof message.evaluation_version === "number"
+          ? message.evaluation_version
+          : undefined,
     }));
 
     setMessages(mappedMessages.length > 0 ? mappedMessages : initialMessages);
     sessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setContextDocs([]);
+    setSelectedMessageId(null);
+    setEvaluationHistory([]);
+  };
+
+  const selectAssistantMessage = async (messageId: string) => {
+    setSelectedMessageId(messageId);
+
+    try {
+      const versions = await api.fetchMessageEvaluations(messageId);
+      const mapped: MessageEvaluationVersion[] = versions.map((version) => ({
+        id: version.id,
+        messageId: version.message_id,
+        version: version.version,
+        status: version.status,
+        faithfulness:
+          typeof version.faithfulness === "number"
+            ? version.faithfulness
+            : undefined,
+        answerRelevancy:
+          typeof version.answer_relevancy === "number"
+            ? version.answer_relevancy
+            : undefined,
+        reasoning:
+          typeof version.reasoning === "string" ? version.reasoning : undefined,
+        errorMessage:
+          typeof version.error_message === "string"
+            ? version.error_message
+            : undefined,
+        createdAt: version.created_at,
+        updatedAt: version.updated_at,
+      }));
+
+      setEvaluationHistory(mapped);
+    } catch {
+      setEvaluationHistory([]);
+    }
   };
 
   const sendMessage = async (queryText: string) => {
@@ -160,6 +278,8 @@ export function useChat(settings: ChatSettings) {
         (meta) => {
           sessionIdRef.current = meta.session_id;
           setActiveSessionId(meta.session_id);
+          assistantIdAliasRef.current[meta.assistant_message_id] =
+            activeAssistantMessageId;
 
           setMessages((previous) =>
             previous.map((message) => {
@@ -213,9 +333,12 @@ export function useChat(settings: ChatSettings) {
     errorMessage,
     sessions,
     activeSessionId,
+    selectedMessageId,
+    evaluationHistory,
     sendMessage,
     clearChat,
     loadSession,
     refreshSessions,
+    selectAssistantMessage,
   };
 }

@@ -1,9 +1,12 @@
 import unittest
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from sqlalchemy import asc, desc
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, col, create_engine, select
 
 from backend.app import app, get_db
 from backend.app import evaluator as real_evaluator
@@ -16,8 +19,9 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
     def setUp(self):
         # Override settings for testing
         self.settings = Settings(
-            database_url="sqlite:///:memory:", openrouter_api_key="test-key"
+            database_url="sqlite:///:memory:", openrouter_api_key=SecretStr("test-key")
         )
+
         self.engine = create_engine(
             "sqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -109,6 +113,8 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             self.assertEqual(assistant_messages[0].session_id, sessions[0].id)
             self.assertEqual(user_messages[0].content, "What is RAG?")
             self.assertEqual(assistant_messages[0].content, "RAG stream")
+            self.assertIsNotNone(assistant_messages[0].latency_ms)
+            self.assertGreaterEqual(assistant_messages[0].latency_ms, 0)
 
         mock_evaluate_ragas_for_stream.assert_called_once()
 
@@ -130,7 +136,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             assistant = session.exec(
                 select(ChatMessage)
                 .where(ChatMessage.role == "assistant")
-                .order_by(ChatMessage.created_at.desc())
+                .order_by(desc(col(ChatMessage.created_at)))
             ).first()
 
             self.assertIsNotNone(assistant)
@@ -138,7 +144,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             evaluations = session.exec(
                 select(Evaluation)
                 .where(Evaluation.message_id == assistant.id)
-                .order_by(Evaluation.version.asc())
+                .order_by(asc(col(Evaluation.version)))
             ).all()
 
             self.assertEqual(len(evaluations), 1)
@@ -146,3 +152,9 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             self.assertEqual(evaluations[0].status, "completed")
             self.assertEqual(evaluations[0].faithfulness, 0.95)
             self.assertEqual(evaluations[0].answer_relevancy, 0.9)
+            self.assertIsNotNone(evaluations[0].reasoning)
+            self.assertGreater(len(evaluations[0].reasoning), 10)
+            self.assertIsNotNone(assistant.latency_ms)
+            self.assertGreaterEqual(assistant.latency_ms, 0)
+            self.assertIsNotNone(assistant.token_count)
+            self.assertGreater(assistant.token_count, 0)

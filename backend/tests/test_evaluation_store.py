@@ -57,6 +57,7 @@ class TestEvaluationStore(unittest.TestCase):
         )
 
         self.assertIsNotNone(updated)
+        assert updated is not None
         self.assertEqual(updated.status, "completed")
         self.assertEqual(updated.faithfulness, 0.91)
         self.assertEqual(updated.answer_relevancy, 0.88)
@@ -72,6 +73,7 @@ class TestEvaluationStore(unittest.TestCase):
         )
 
         self.assertIsNotNone(updated)
+        assert updated is not None
         self.assertEqual(updated.status, "failed")
         self.assertEqual(updated.error_message, "Evaluator timeout")
 

@@ -79,6 +79,29 @@ describe("api adapter", () => {
     expect(messages[0].content).toBe("hello");
   });
 
+  it("fetchMessageEvaluations returns backend evaluation versions", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          id: "eval-1",
+          message_id: "assistant-1",
+          version: 1,
+          status: "completed",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:01Z",
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const versions = await api.fetchMessageEvaluations("assistant-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(versions).toHaveLength(1);
+    expect(versions[0].message_id).toBe("assistant-1");
+  });
+
   it("fetchContext maps backend response into ContextDoc items", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -107,6 +130,40 @@ describe("api adapter", () => {
     await expect(api.fetchContext("q", settings)).rejects.toThrow(
       "Context request failed with status 500",
     );
+  });
+
+  it("streamScores emits score payloads and supports cleanup", () => {
+    const onScore = vi.fn();
+    const onError = vi.fn();
+
+    const cleanup = api.streamScores(onScore, onError);
+    const source = MockEventSource.latest;
+
+    expect(source).not.toBeNull();
+    expect(source?.url).toContain("/scores/stream");
+
+    source?.onmessage?.({
+      data: JSON.stringify({
+        type: "score",
+        message_id: "assistant-1",
+        faithfulness: 0.91,
+        answer_relevancy: 0.88,
+        status: "completed",
+        latency_ms: 120,
+      }),
+    } as MessageEvent);
+
+    expect(onScore).toHaveBeenCalledWith({
+      type: "score",
+      message_id: "assistant-1",
+      faithfulness: 0.91,
+      answer_relevancy: 0.88,
+      status: "completed",
+      latency_ms: 120,
+    });
+
+    cleanup();
+    expect(source?.closed).toBe(true);
   });
 
   it("streamChat emits metadata and tokens, completes on [DONE], and supports cleanup", () => {

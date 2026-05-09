@@ -23,6 +23,31 @@ type StreamMeta = {
   assistant_message_id: string;
 };
 
+type ScoreEvent = {
+  type: "score";
+  message_id: string;
+  faithfulness?: number | null;
+  answer_relevancy?: number | null;
+  reasoning?: string | null;
+  status?: "pending" | "completed" | "failed";
+  version?: number | null;
+  latency_ms?: number | null;
+  token_count?: number | null;
+};
+
+export type MessageEvaluationVersion = {
+  id: string;
+  message_id: string;
+  version: number;
+  status: "pending" | "completed" | "failed";
+  faithfulness?: number | null;
+  answer_relevancy?: number | null;
+  reasoning?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export const api = {
   async fetchSessions(): Promise<SessionSummary[]> {
     const response = await fetch(`${API_BASE_URL}/sessions`);
@@ -46,6 +71,22 @@ export const api = {
     }
 
     return (await response.json()) as SessionMessage[];
+  },
+
+  async fetchMessageEvaluations(
+    messageId: string,
+  ): Promise<MessageEvaluationVersion[]> {
+    const response = await fetch(
+      `${API_BASE_URL}/messages/${encodeURIComponent(messageId)}/evaluations`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Message evaluations request failed with status ${response.status}`,
+      );
+    }
+
+    return (await response.json()) as MessageEvaluationVersion[];
   },
 
   async fetchContext(
@@ -77,6 +118,40 @@ export const api = {
       title: `Context ${index + 1}`,
       content,
     }));
+  },
+
+  streamScores(
+    onScore: (event: ScoreEvent) => void,
+    onError: (error: Error) => void,
+  ): () => void {
+    const source = new EventSource(`${API_BASE_URL}/scores/stream`);
+
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as ScoreEvent;
+
+        if (
+          payload.type !== "score" ||
+          typeof payload.message_id !== "string"
+        ) {
+          throw new Error("Malformed score payload");
+        }
+
+        onScore(payload);
+      } catch {
+        onError(
+          new Error("Could not parse score stream data from the backend."),
+        );
+        source.close();
+      }
+    };
+
+    source.onerror = () => {
+      onError(new Error("Score stream connection failed. Please try again."));
+      source.close();
+    };
+
+    return () => source.close();
   },
 
   streamChat(

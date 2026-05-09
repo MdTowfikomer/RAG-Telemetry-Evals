@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlalchemy import desc
+from sqlmodel import Session, col, select
 
 from .models import Evaluation
 
@@ -10,7 +11,7 @@ def get_next_evaluation_version(db: Session, message_id: UUID) -> int:
     latest = db.exec(
         select(Evaluation)
         .where(Evaluation.message_id == message_id)
-        .order_by(Evaluation.version.desc())
+        .order_by(desc(col(Evaluation.version)))
     ).first()
 
     if latest is None:
@@ -36,6 +37,7 @@ def mark_evaluation_completed(
     evaluation_id: UUID,
     faithfulness: float | None,
     answer_relevancy: float | None,
+    reasoning: str | None = None,
 ) -> Evaluation | None:
     evaluation = db.get(Evaluation, evaluation_id)
     if evaluation is None:
@@ -44,6 +46,7 @@ def mark_evaluation_completed(
     evaluation.status = "completed"
     evaluation.faithfulness = faithfulness
     evaluation.answer_relevancy = answer_relevancy
+    evaluation.reasoning = reasoning
     evaluation.error_message = None
     evaluation.updated_at = datetime.now(UTC)
 

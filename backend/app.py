@@ -2,7 +2,8 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import AsyncGenerator, List, Optional
+from time import perf_counter
+from typing import Any, AsyncGenerator, List, Optional
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -11,7 +12,8 @@ from fastapi.responses import StreamingResponse
 from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
 from pydantic import BaseModel, SecretStr
-from sqlmodel import Session, select
+from sqlalchemy import asc, desc
+from sqlmodel import Session, col, select
 
 from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRetriever
 from backend.core import (
@@ -44,13 +46,67 @@ if settings.openrouter_api_key is None:
 openrouter_api_key = settings.openrouter_api_key
 
 
+def run_startup_migrations() -> None:
+    engine = factory.get_engine()
+
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.connect() as connection:
+        chatmessage_columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(chatmessage)")
+        }
+        if "latency_ms" not in chatmessage_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE chatmessage ADD COLUMN latency_ms INTEGER"
+            )
+        if "token_count" not in chatmessage_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE chatmessage ADD COLUMN token_count INTEGER"
+            )
+
+        evaluation_columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(evaluation)")
+        }
+        if "reasoning" not in evaluation_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE evaluation ADD COLUMN reasoning VARCHAR"
+            )
+
+        connection.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     factory.init_db()
+    run_startup_migrations()
     yield
 
 
 app = FastAPI(title="Modular RAG API", lifespan=lifespan)
+
+
+class ScoreBroadcaster:
+    def __init__(self):
+        self.subscribers: list[asyncio.Queue[dict[str, Any]]] = []
+
+    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        if queue in self.subscribers:
+            self.subscribers.remove(queue)
+
+    async def publish(self, event: dict[str, Any]) -> None:
+        for subscriber in list(self.subscribers):
+            await subscriber.put(event)
+
+
+score_broadcaster = ScoreBroadcaster()
 
 
 def get_db():
@@ -143,7 +199,27 @@ class SessionMessageResponse(BaseModel):
     session_id: UUID
     role: str
     content: str
+    latency_ms: int | None = None
+    token_count: int | None = None
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    reasoning: str | None = None
+    evaluation_status: str | None = None
+    evaluation_version: int | None = None
     created_at: datetime
+
+
+class MessageEvaluationVersionResponse(BaseModel):
+    id: UUID
+    message_id: UUID
+    version: int
+    status: str
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    reasoning: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 async def evaluate_ragas(
@@ -167,27 +243,66 @@ async def evaluate_ragas(
         )
 
         with Session(db_bind) as evaluation_db:
-            mark_evaluation_completed(
+            updated_eval = mark_evaluation_completed(
                 db=evaluation_db,
                 evaluation_id=evaluation_id,
                 faithfulness=scores.get("faithfulness"),
                 answer_relevancy=scores.get("answer_relevancy"),
+                reasoning=scores.get("reasoning")
+                or "Ragas evaluation completed successfully.",
             )
+
+            if updated_eval is not None:
+                message = evaluation_db.get(ChatMessage, updated_eval.message_id)
+                if message is not None:
+                    await score_broadcaster.publish(
+                        {
+                            "type": "score",
+                            "message_id": str(message.id),
+                            "faithfulness": updated_eval.faithfulness,
+                            "answer_relevancy": updated_eval.answer_relevancy,
+                            "reasoning": updated_eval.reasoning,
+                            "status": updated_eval.status,
+                            "version": updated_eval.version,
+                            "latency_ms": message.latency_ms,
+                            "token_count": message.token_count,
+                        }
+                    )
     except Exception as e:
         with Session(db_bind) as evaluation_db:
-            mark_evaluation_failed(
+            updated_eval = mark_evaluation_failed(
                 db=evaluation_db,
                 evaluation_id=evaluation_id,
                 error_message=str(e),
             )
 
+            if updated_eval is not None:
+                await score_broadcaster.publish(
+                    {
+                        "type": "score",
+                        "message_id": str(updated_eval.message_id),
+                        "faithfulness": updated_eval.faithfulness,
+                        "answer_relevancy": updated_eval.answer_relevancy,
+                        "reasoning": updated_eval.reasoning,
+                        "status": updated_eval.status,
+                        "version": updated_eval.version,
+                        "latency_ms": None,
+                        "token_count": None,
+                    }
+                )
+
         print(f"Error in Ragas evaluation delegation: {e}")
+
+
+def estimate_token_count(content: str) -> int:
+    return len(content.split())
 
 
 async def persist_assistant_message(
     assistant_message_id: UUID,
     content: str,
     db_bind,
+    latency_ms: int | None = None,
 ) -> None:
     with Session(db_bind) as persistence_db:
         assistant_msg = persistence_db.get(ChatMessage, assistant_message_id)
@@ -195,6 +310,8 @@ async def persist_assistant_message(
             return
 
         assistant_msg.content = content
+        assistant_msg.latency_ms = latency_ms
+        assistant_msg.token_count = estimate_token_count(content)
         persistence_db.add(assistant_msg)
 
         session = persistence_db.get(ChatSession, assistant_msg.session_id)
@@ -240,6 +357,7 @@ async def sse_stream_response(
 ) -> AsyncGenerator[str, None]:
     pipeline = get_pipeline_for_model(model)
     generated_tokens: list[str] = []
+    stream_started_at = perf_counter()
 
     stream_meta_payload = json.dumps(
         {
@@ -258,10 +376,12 @@ async def sse_stream_response(
             yield f"data: {payload}\n\n"
     finally:
         final_answer = "".join(generated_tokens)
+        elapsed_ms = int((perf_counter() - stream_started_at) * 1000)
         await persist_assistant_message(
             assistant_message_id=assistant_message_id,
             content=final_answer,
             db_bind=db_bind,
+            latency_ms=elapsed_ms,
         )
 
         if final_answer.strip():
@@ -315,12 +435,18 @@ async def chat_endpoint(
 
             # 3. Execute RAG Pipeline
             pipeline = get_pipeline_for_model(request.model)
+            response_started_at = perf_counter()
             answer, docs = await pipeline.execute(request.query, k=request.k)
+            elapsed_ms = int((perf_counter() - response_started_at) * 1000)
             contexts = [doc.page_content for doc in docs]
 
             # 4. Persist Assistant Message
             assistant_msg = ChatMessage(
-                session_id=session.id, role="assistant", content=answer
+                session_id=session.id,
+                role="assistant",
+                content=answer,
+                latency_ms=elapsed_ms,
+                token_count=estimate_token_count(answer),
             )
             db.add(assistant_msg)
             db.commit()
@@ -371,7 +497,7 @@ async def context_endpoint(request: ChatRequest):
 @app.get("/sessions", response_model=List[SessionSummaryResponse])
 async def list_sessions(db: Session = Depends(get_db)):
     sessions = db.exec(
-        select(ChatSession).order_by(ChatSession.created_at.desc())
+        select(ChatSession).order_by(desc(col(ChatSession.created_at)))
     ).all()
 
     return [
@@ -394,18 +520,77 @@ async def get_session_messages(session_id: UUID, db: Session = Depends(get_db)):
     messages = db.exec(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(asc(col(ChatMessage.created_at)))
+    ).all()
+
+    response_messages: list[SessionMessageResponse] = []
+
+    for message in messages:
+        latest_evaluation = db.exec(
+            select(Evaluation)
+            .where(Evaluation.message_id == message.id)
+            .order_by(desc(col(Evaluation.version)))
+        ).first()
+
+        response_messages.append(
+            SessionMessageResponse(
+                id=message.id,
+                session_id=message.session_id,
+                role=message.role,
+                content=message.content,
+                latency_ms=message.latency_ms,
+                token_count=message.token_count,
+                faithfulness=None
+                if latest_evaluation is None
+                else latest_evaluation.faithfulness,
+                answer_relevancy=None
+                if latest_evaluation is None
+                else latest_evaluation.answer_relevancy,
+                reasoning=None
+                if latest_evaluation is None
+                else latest_evaluation.reasoning,
+                evaluation_status=None
+                if latest_evaluation is None
+                else latest_evaluation.status,
+                evaluation_version=None
+                if latest_evaluation is None
+                else latest_evaluation.version,
+                created_at=message.created_at,
+            )
+        )
+
+    return response_messages
+
+
+@app.get(
+    "/messages/{message_id}/evaluations",
+    response_model=List[MessageEvaluationVersionResponse],
+)
+async def get_message_evaluations(message_id: UUID, db: Session = Depends(get_db)):
+    message = db.get(ChatMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    evaluations = db.exec(
+        select(Evaluation)
+        .where(Evaluation.message_id == message_id)
+        .order_by(desc(col(Evaluation.version)))
     ).all()
 
     return [
-        SessionMessageResponse(
-            id=message.id,
-            session_id=message.session_id,
-            role=message.role,
-            content=message.content,
-            created_at=message.created_at,
+        MessageEvaluationVersionResponse(
+            id=evaluation.id,
+            message_id=evaluation.message_id,
+            version=evaluation.version,
+            status=evaluation.status,
+            faithfulness=evaluation.faithfulness,
+            answer_relevancy=evaluation.answer_relevancy,
+            reasoning=evaluation.reasoning,
+            error_message=evaluation.error_message,
+            created_at=evaluation.created_at,
+            updated_at=evaluation.updated_at,
         )
-        for message in messages
+        for evaluation in evaluations
     ]
 
 
@@ -496,12 +681,31 @@ async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_d
     )
 
 
+@app.get("/scores/stream")
+async def scores_stream_endpoint():
+    async def event_generator() -> AsyncGenerator[str, None]:
+        subscriber = score_broadcaster.subscribe()
+        try:
+            while True:
+                event = await subscriber.get()
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            score_broadcaster.unsubscribe(subscriber)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
 
 
 if __name__ == "__main__":
+    import sys
+
     import uvicorn
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     uvicorn.run(app, host="0.0.0.0", port=8000)

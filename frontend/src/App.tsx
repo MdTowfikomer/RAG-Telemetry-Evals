@@ -22,9 +22,12 @@ function App() {
     errorMessage,
     sessions,
     activeSessionId,
+    selectedMessageId,
+    evaluationHistory,
     sendMessage,
     clearChat,
     loadSession,
+    selectAssistantMessage,
   } = useChat(settings);
 
   const handleSendQuery = async () => {
@@ -53,9 +56,19 @@ function App() {
           onQueryChange={setQuery}
           onSendQuery={handleSendQuery}
           onClearChat={clearChat}
+          onSelectAssistantMessage={(messageId) => {
+            void selectAssistantMessage(messageId);
+          }}
+          selectedMessageId={selectedMessageId}
           errorMessage={errorMessage}
         />
-        <RightPane contextDocs={contextDocs} />
+        <RightPane
+          contextDocs={contextDocs}
+          selectedMessage={
+            messages.find((message) => message.id === selectedMessageId) ?? null
+          }
+          evaluationHistory={evaluationHistory}
+        />
       </div>
     </div>
   );

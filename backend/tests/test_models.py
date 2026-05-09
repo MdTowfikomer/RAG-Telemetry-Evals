@@ -1,7 +1,7 @@
 import unittest
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 
 from backend.core.models import ChatMessage, ChatSession, Evaluation
 
@@ -58,6 +58,7 @@ class TestModels(unittest.TestCase):
         self.assertEqual(len(session.messages), 2)
         self.assertEqual(session.messages[0].content, "msg1")
         self.assertEqual(session.messages[1].content, "msg2")
+        assert session.messages[0].session is not None
         self.assertEqual(session.messages[0].session.id, session.id)
 
     def test_message_to_evaluations_relationship(self):

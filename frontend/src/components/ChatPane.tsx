@@ -10,6 +10,8 @@ interface ChatPaneProps {
   onQueryChange: (value: string) => void;
   onSendQuery: () => Promise<void>;
   onClearChat: () => void;
+  onSelectAssistantMessage: (messageId: string) => void;
+  selectedMessageId: string | null;
   errorMessage: string | null;
 }
 
@@ -20,6 +22,8 @@ function ChatPane({
   onQueryChange,
   onSendQuery,
   onClearChat,
+  onSelectAssistantMessage,
+  selectedMessageId,
   errorMessage,
 }: ChatPaneProps) {
   const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
@@ -62,7 +66,25 @@ function ChatPane({
 
       <div className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/60 p-4">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <div
+            key={message.id}
+            onClick={() => {
+              if (message.role === "assistant") {
+                onSelectAssistantMessage(message.id);
+              }
+            }}
+            className={
+              message.role === "assistant"
+                ? `cursor-pointer rounded-lg transition ${
+                    selectedMessageId === message.id
+                      ? "ring-1 ring-cyan-500/60"
+                      : "hover:ring-1 hover:ring-slate-700"
+                  }`
+                : ""
+            }
+          >
+            <MessageBubble message={message} />
+          </div>
         ))}
       </div>
 

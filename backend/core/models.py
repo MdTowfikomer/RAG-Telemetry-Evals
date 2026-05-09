@@ -26,6 +26,8 @@ class ChatMessage(SQLModel, table=True):
     session_id: UUID = SQLField(foreign_key="chatsession.id")
     role: str  # "user" or "assistant"
     content: str
+    latency_ms: int | None = None
+    token_count: int | None = None
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
     session: Optional[ChatSession] = Relationship(back_populates="messages")
@@ -40,6 +42,7 @@ class Evaluation(SQLModel, table=True):
 
     faithfulness: float | None = None
     answer_relevancy: float | None = None
+    reasoning: str | None = None
     error_message: str | None = None
 
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
