@@ -1,5 +1,4 @@
 import asyncio
-from contextlib import nullcontext
 from typing import Callable
 
 from langchain_core.output_parsers import StrOutputParser
@@ -16,20 +15,13 @@ class OpenRouterGenerator(Generator):
         self,
         api_key_provider: Callable[[], SecretStr],
         default_model: str,
-        tracer=None,
         base_url: str = "https://openrouter.ai/api/v1",
         stream_delay_seconds: float = 0.01,
     ):
         self.api_key_provider = api_key_provider
         self.default_model = default_model
-        self.tracer = tracer
         self.base_url = base_url
         self.stream_delay_seconds = stream_delay_seconds
-
-    def _start_span(self, name: str):
-        if self.tracer is None:
-            return nullcontext()
-        return self.tracer.start_as_current_span(name)
 
     def _build_chain(self, context_text: str):
         prompt = ChatPromptTemplate.from_template(
@@ -58,16 +50,12 @@ class OpenRouterGenerator(Generator):
         )
 
     async def generate(self, query: str, docs: list[Document]) -> str:
-        with self._start_span("generate") as span:
-            context_text = "\n\n".join([doc.page_content for doc in docs])
-            chain = self._build_chain(context_text)
+        context_text = "\n\n".join([doc.page_content for doc in docs])
+        chain = self._build_chain(context_text)
 
-            response = await asyncio.to_thread(chain.invoke, query)
+        response = await asyncio.to_thread(chain.invoke, query)
 
-            if span is not None:
-                span.set_attribute("generation.model", self.default_model)
-
-            return response
+        return response
 
     def stream(self, query: str, docs: list[Document]):
         context_text = "\n\n".join([doc.page_content for doc in docs])

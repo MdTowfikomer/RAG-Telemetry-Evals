@@ -157,8 +157,8 @@ tracer = otel_trace.get_tracer(__name__)
 embeddings = factory.get_embeddings()
 vectorstore = factory.get_vectorstore()
 
-retriever_adapter = QdrantRetriever(vectorstore=vectorstore, tracer=tracer)
-reranker_adapter = PassThroughReranker(tracer=tracer)
+retriever_adapter = QdrantRetriever(vectorstore=vectorstore)
+reranker_adapter = PassThroughReranker()
 
 pipeline_cache: dict[str, RAGPipeline] = {}
 
@@ -176,7 +176,6 @@ def get_pipeline_for_model(model: str | None) -> RAGPipeline:
     generator_adapter = OpenRouterGenerator(
         api_key_provider=get_openrouter_api_key,
         default_model=selected_model,
-        tracer=tracer,
     )
 
     pipeline = RAGPipeline(
