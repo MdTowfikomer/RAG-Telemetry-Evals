@@ -6,7 +6,6 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from backend.core import ChatMessage, ChatSession, Document
-from backend.core.evaluation_store import create_pending_evaluation
 from backend.core.exceptions import SessionNotFoundError
 from backend.services.chat_service import ChatService
 
@@ -29,7 +28,6 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.mock_evaluate_ragas_fn = AsyncMock()
-        self.mock_stream_response_factory = MagicMock()
 
         self.chat_service = ChatService(
             tracer=self.mock_tracer,
@@ -37,7 +35,6 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             token_counter=self.mock_token_counter,
             create_pending_evaluation_fn=self.mock_create_pending_evaluation_fn,
             evaluate_ragas_fn=self.mock_evaluate_ragas_fn,
-            stream_response_factory=self.mock_stream_response_factory,
         )
 
     def tearDown(self):
@@ -157,16 +154,16 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_chat_stream_creates_new_session_and_messages(self):
+        async def mock_stream(_query, k=3):
+            yield "chunk1"
+            yield "chunk2"
+
         mock_pipeline = AsyncMock()
-        mock_pipeline.stream.return_value = AsyncMock()
-        mock_pipeline.stream.return_value.__aiter__.return_value = iter(
-            ["chunk1", "chunk2"]
+        mock_pipeline.stream = mock_stream
+        mock_pipeline.prepare_context = AsyncMock(
+            return_value=[Document(page_content="stream context")]
         )
         self.mock_pipeline_factory.return_value = mock_pipeline
-
-        mock_stream_generator = AsyncMock()
-        mock_stream_generator.__aiter__.return_value = iter(["token1", "token2"])
-        self.mock_stream_response_factory.return_value = mock_stream_generator
 
         db_gen = self.get_db()
         db = next(db_gen)
@@ -195,7 +192,7 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[0].role, "user")
             self.assertEqual(messages[0].content, "stream query")
             self.assertEqual(messages[1].role, "assistant")
-            self.assertEqual(messages[1].content, "") # Content is empty as it's streamed
+            self.assertEqual(messages[1].content, "chunk1chunk2")
 
     async def test_chat_stream_uses_existing_session(self):
         db_gen = self.get_db()
@@ -206,16 +203,16 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         db.commit()
         db.refresh(existing_session)
 
+        async def mock_stream(_query, k=3):
+            yield "chunk1"
+            yield "chunk2"
+
         mock_pipeline = AsyncMock()
-        mock_pipeline.stream.return_value = AsyncMock()
-        mock_pipeline.stream.return_value.__aiter__.return_value = iter(
-            ["chunk1", "chunk2"]
+        mock_pipeline.stream = mock_stream
+        mock_pipeline.prepare_context = AsyncMock(
+            return_value=[Document(page_content="stream context")]
         )
         self.mock_pipeline_factory.return_value = mock_pipeline
-
-        mock_stream_generator = AsyncMock()
-        mock_stream_generator.__aiter__.return_value = iter(["token1", "token2"])
-        self.mock_stream_response_factory.return_value = mock_stream_generator
 
         result = self.chat_service.chat_stream(
             query="new stream query",
@@ -238,6 +235,7 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(messages), 2)  # User and assistant messages
             self.assertEqual(messages[0].session_id, existing_session.id)
             self.assertEqual(messages[1].session_id, existing_session.id)
+            self.assertEqual(messages[1].content, "chunk1chunk2")
 
     async def test_chat_stream_raises_session_not_found_error(self):
         db_gen = self.get_db()

@@ -76,7 +76,10 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         )
         self.assertEqual(self.mock_evaluator.called_with[0].contexts, ["RAG is cool."])
 
-    @patch("backend.app.evaluate_ragas_for_stream", new_callable=AsyncMock)
+    @patch(
+        "backend.services.chat_service.ChatService._evaluate_ragas_for_stream",
+        new_callable=AsyncMock,
+    )
     @patch("backend.app.get_pipeline_for_model")
     def test_chat_stream_persists_messages_linked_to_session(
         self,

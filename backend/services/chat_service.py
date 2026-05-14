@@ -1,3 +1,5 @@
+import asyncio
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -5,6 +7,7 @@ from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
 from sqlalchemy.orm import Session as SQLAlchemySession
+from sqlmodel import Session as SQLModelSession
 
 from backend.core import ChatMessage, ChatSession
 from backend.core.exceptions import SessionNotFoundError
@@ -33,14 +36,12 @@ class ChatService:
         token_counter: Callable[[str], int],
         create_pending_evaluation_fn: Callable[..., object],
         evaluate_ragas_fn: Callable[..., Awaitable[None]],
-        stream_response_factory: Callable[..., AsyncGenerator[str, None]],
     ) -> None:
         self._tracer = tracer
         self._pipeline_factory = pipeline_factory
         self._token_counter = token_counter
         self._create_pending_evaluation = create_pending_evaluation_fn
         self._evaluate_ragas = evaluate_ragas_fn
-        self._stream_response_factory = stream_response_factory
 
     async def chat(
         self,
@@ -150,7 +151,7 @@ class ChatService:
                 message_id=assistant_msg.id,
             )
 
-            stream = self._stream_response_factory(
+            stream = self._stream_response(
                 query=query,
                 k=k,
                 model=model,
@@ -162,3 +163,107 @@ class ChatService:
             )
 
             return ChatStreamResult(stream=stream)
+
+    async def _persist_assistant_message(
+        self,
+        *,
+        assistant_message_id: UUID,
+        content: str,
+        db_bind,
+        latency_ms: int | None = None,
+    ) -> None:
+        with SQLModelSession(db_bind) as persistence_db:
+            assistant_msg = persistence_db.get(ChatMessage, assistant_message_id)
+            if assistant_msg is None:
+                return
+
+            assistant_msg.content = content
+            assistant_msg.latency_ms = latency_ms
+            assistant_msg.token_count = self._token_counter(content)
+            persistence_db.add(assistant_msg)
+
+            session = persistence_db.get(ChatSession, assistant_msg.session_id)
+            if session is not None:
+                session.updated_at = datetime.now(UTC)
+                persistence_db.add(session)
+
+            persistence_db.commit()
+
+    async def _evaluate_ragas_for_stream(
+        self,
+        *,
+        query: str,
+        answer: str,
+        k: int,
+        model: str,
+        evaluation_id: UUID,
+        db_bind,
+    ) -> None:
+        try:
+            pipeline = self._pipeline_factory(model)
+            docs = await pipeline.prepare_context(query, k=k)
+            contexts = [doc.page_content for doc in docs]
+            await self._evaluate_ragas(
+                query=query,
+                answer=answer,
+                contexts=contexts,
+                evaluation_id=evaluation_id,
+                db_bind=db_bind,
+            )
+        except Exception as error:
+            print(f"Error in streaming evaluation delegation: {error}")
+
+    async def _stream_response(
+        self,
+        *,
+        query: str,
+        k: int,
+        model: str,
+        session_id: UUID,
+        user_message_id: UUID,
+        assistant_message_id: UUID,
+        db_bind,
+        evaluation_id: UUID,
+    ) -> AsyncGenerator[str, None]:
+        pipeline = self._pipeline_factory(model)
+        generated_tokens: list[str] = []
+        stream_started_at = perf_counter()
+
+        stream_meta_payload = json.dumps(
+            {
+                "type": "meta",
+                "session_id": str(session_id),
+                "user_message_id": str(user_message_id),
+                "assistant_message_id": str(assistant_message_id),
+            }
+        )
+        yield f"data: {stream_meta_payload}\n\n"
+
+        try:
+            async for token in pipeline.stream(query, k=k):
+                generated_tokens.append(token)
+                payload = json.dumps({"type": "token", "token": token})
+                yield f"data: {payload}\n\n"
+        finally:
+            final_answer = "".join(generated_tokens)
+            elapsed_ms = int((perf_counter() - stream_started_at) * 1000)
+            await self._persist_assistant_message(
+                assistant_message_id=assistant_message_id,
+                content=final_answer,
+                db_bind=db_bind,
+                latency_ms=elapsed_ms,
+            )
+
+            if final_answer.strip():
+                asyncio.create_task(
+                    self._evaluate_ragas_for_stream(
+                        query=query,
+                        answer=final_answer,
+                        k=k,
+                        model=model,
+                        evaluation_id=evaluation_id,
+                        db_bind=db_bind,
+                    )
+                )
+
+        yield "data: [DONE]\n\n"
