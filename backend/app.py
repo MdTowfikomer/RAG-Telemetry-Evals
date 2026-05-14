@@ -25,6 +25,7 @@ from backend.core import (
     InfrastructureFactory,
     RAGPipeline,
     Settings,
+    TracingHook,
 )
 from backend.core.evaluation_store import (
     create_pending_evaluation,
@@ -182,7 +183,7 @@ def get_pipeline_for_model(model: str | None) -> RAGPipeline:
         retriever=retriever_adapter,
         reranker=reranker_adapter,
         generator=generator_adapter,
-        tracer=tracer,
+        hooks=[TracingHook(tracer=tracer)],
     )
 
     pipeline_cache[selected_model] = pipeline

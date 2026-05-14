@@ -1,6 +1,14 @@
 import unittest
 
-from backend.core import Document, Generator, RAGPipeline, Reranker, Retriever
+from backend.core import (
+    Document,
+    Generator,
+    RAGHook,
+    RAGPipeline,
+    Reranker,
+    Retriever,
+    TracingHook,
+)
 
 
 class MockRetriever(Retriever):
@@ -64,6 +72,91 @@ class StreamFailingGenerator(Generator):
             raise RuntimeError("stream failed")
 
         return _broken_stream()
+
+
+class RecordingHook(RAGHook):
+    def __init__(self):
+        self.events: list[str] = []
+        self.last_error: Exception | None = None
+
+    async def on_start(self, *, query: str, k: int, is_stream: bool) -> None:
+        self.events.append("on_start")
+
+    async def after_retrieve(
+        self,
+        *,
+        query: str,
+        k: int,
+        docs: list[Document],
+        is_stream: bool,
+    ) -> None:
+        self.events.append("after_retrieve")
+
+    async def after_rerank(
+        self,
+        *,
+        query: str,
+        k: int,
+        docs: list[Document],
+        is_stream: bool,
+    ) -> None:
+        self.events.append("after_rerank")
+
+    async def on_end(
+        self,
+        *,
+        query: str,
+        k: int,
+        response: str | None,
+        docs: list[Document],
+        is_stream: bool,
+    ) -> None:
+        self.events.append("on_end")
+
+    async def on_error(
+        self,
+        *,
+        query: str,
+        k: int,
+        error: Exception,
+        is_stream: bool,
+    ) -> None:
+        self.events.append("on_error")
+        self.last_error = error
+
+
+class FakeSpan:
+    def __init__(self):
+        self.attributes: dict[str, object] = {}
+        self.recorded_exceptions: list[Exception] = []
+        self.exit_args: tuple[object, object, object] | None = None
+
+    def set_attribute(self, key: str, value: object) -> None:
+        self.attributes[key] = value
+
+    def record_exception(self, error: Exception) -> None:
+        self.recorded_exceptions.append(error)
+
+
+class FakeSpanContextManager:
+    def __init__(self, span: FakeSpan):
+        self.span = span
+
+    def __enter__(self) -> FakeSpan:
+        return self.span
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.span.exit_args = (exc_type, exc, tb)
+
+
+class FakeTracer:
+    def __init__(self):
+        self.started_spans: list[tuple[str, FakeSpan]] = []
+
+    def start_as_current_span(self, name: str) -> FakeSpanContextManager:
+        span = FakeSpan()
+        self.started_spans.append((name, span))
+        return FakeSpanContextManager(span)
 
 
 class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
@@ -141,6 +234,141 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "stream failed"):
             async for _ in pipeline.stream("broken stream", k=1):
                 pass
+
+    async def test_execute_triggers_hooks(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = MockGenerator()
+        hook = RecordingHook()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[hook],
+        )
+
+        await pipeline.execute("hook test", k=3)
+
+        self.assertEqual(
+            hook.events,
+            ["on_start", "after_retrieve", "after_rerank", "on_end"],
+        )
+
+    async def test_stream_triggers_hooks(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = MockGenerator()
+        hook = RecordingHook()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[hook],
+        )
+
+        async for _ in pipeline.stream("hook stream", k=2):
+            pass
+
+        self.assertEqual(
+            hook.events,
+            ["on_start", "after_retrieve", "after_rerank", "on_end"],
+        )
+
+    async def test_execute_triggers_on_error_hook(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = FailingGenerator()
+        hook = RecordingHook()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[hook],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "generation failed"):
+            await pipeline.execute("hook error")
+
+        self.assertEqual(
+            hook.events,
+            ["on_start", "after_retrieve", "after_rerank", "on_error"],
+        )
+        self.assertIsNotNone(hook.last_error)
+
+    async def test_tracing_hook_traces_execute(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = MockGenerator()
+        tracer = FakeTracer()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[TracingHook(tracer=tracer)],
+        )
+
+        await pipeline.execute("trace execute", k=4)
+
+        self.assertEqual(len(tracer.started_spans), 1)
+        span_name, span = tracer.started_spans[0]
+        self.assertEqual(span_name, "rag_pipeline_execute")
+        self.assertEqual(span.attributes["rag.query"], "trace execute")
+        self.assertEqual(span.attributes["rag.k"], 4)
+        self.assertEqual(span.attributes["rag.docs_retrieved"], 2)
+        self.assertEqual(span.attributes["rag.docs_reranked"], 2)
+        self.assertEqual(span.recorded_exceptions, [])
+        self.assertEqual(span.exit_args, (None, None, None))
+
+    async def test_tracing_hook_traces_stream(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = MockGenerator()
+        tracer = FakeTracer()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[TracingHook(tracer=tracer)],
+        )
+
+        async for _ in pipeline.stream("trace stream", k=2):
+            pass
+
+        self.assertEqual(len(tracer.started_spans), 1)
+        span_name, span = tracer.started_spans[0]
+        self.assertEqual(span_name, "rag_pipeline_stream")
+        self.assertEqual(span.attributes["rag.query"], "trace stream")
+        self.assertEqual(span.attributes["rag.k"], 2)
+        self.assertEqual(span.attributes["rag.docs_retrieved"], 2)
+        self.assertEqual(span.attributes["rag.docs_reranked"], 2)
+        self.assertEqual(span.recorded_exceptions, [])
+        self.assertEqual(span.exit_args, (None, None, None))
+
+    async def test_tracing_hook_records_errors(self):
+        retriever = MockRetriever()
+        reranker = MockReranker()
+        generator = FailingGenerator()
+        tracer = FakeTracer()
+        pipeline = RAGPipeline(
+            retriever=retriever,
+            reranker=reranker,
+            generator=generator,
+            hooks=[TracingHook(tracer=tracer)],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "generation failed"):
+            await pipeline.execute("trace error", k=3)
+
+        self.assertEqual(len(tracer.started_spans), 1)
+        span_name, span = tracer.started_spans[0]
+        self.assertEqual(span_name, "rag_pipeline_execute")
+        self.assertEqual(span.attributes["rag.query"], "trace error")
+        self.assertEqual(span.attributes["rag.k"], 3)
+        self.assertEqual(span.attributes["rag.docs_retrieved"], 2)
+        self.assertEqual(span.attributes["rag.docs_reranked"], 2)
+        self.assertEqual(len(span.recorded_exceptions), 1)
+        self.assertIsInstance(span.recorded_exceptions[0], RuntimeError)
+        self.assertEqual(span.exit_args[0], RuntimeError)
 
 
 if __name__ == "__main__":
