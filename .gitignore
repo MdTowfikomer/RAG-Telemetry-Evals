@@ -22,9 +22,12 @@ data/
 
 # Generated documentation
 ARCHITECTURE.md
-DEPLOYMENT_STRATEGY.md
-ARCHITECTURAL_DEEPENING.md
+# DEPLOYMENT_STRATEGY.md
+# ARCHITECTURAL_DEEPENING.md
 ARCHITECTURAL_REVIEW.md
+
+# Python build artifacts
+rag.egg-info/
 
 # Zed files
 *.zed/  
