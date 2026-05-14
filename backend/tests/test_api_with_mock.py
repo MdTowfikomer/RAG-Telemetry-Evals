@@ -8,8 +8,9 @@ from sqlalchemy import asc, desc
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, col, create_engine, select
 
-from backend.app import app, get_db
-from backend.app import evaluator as real_evaluator
+from backend.app import app
+from backend.api.dependencies import get_db
+import backend.api.dependencies as api_dependencies
 from backend.core import Document, Settings
 from backend.core.models import ChatMessage, ChatSession, Evaluation
 from backend.evaluation import MockEvaluator
@@ -39,21 +40,16 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         self.mock_evaluator = MockEvaluator(
             scores={"faithfulness": 0.95, "answer_relevancy": 0.9}
         )
-        # Override the app's evaluator with our mock
-        import backend.app
-
-        backend.app.evaluator = self.mock_evaluator
+        self.real_evaluator = api_dependencies.evaluation_service._evaluator
+        api_dependencies.evaluation_service._evaluator = self.mock_evaluator
         import asyncio
 
-        asyncio.run(backend.app.reevaluate_rate_limiter.reset())
+        asyncio.run(api_dependencies.reevaluate_rate_limiter.reset())
 
     def tearDown(self):
-        # Restore real evaluator
-        import backend.app
+        api_dependencies.evaluation_service._evaluator = self.real_evaluator
 
-        backend.app.evaluator = real_evaluator
-
-    @patch("backend.app.get_pipeline_for_model")
+    @patch("backend.api.dependencies.get_pipeline_for_model")
     def test_chat_flow_triggers_evaluation(self, mock_get_pipeline_for_model):
         mock_pipeline = AsyncMock()
         mock_docs = [Document(page_content="RAG is cool.", metadata={})]
@@ -76,8 +72,11 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         )
         self.assertEqual(self.mock_evaluator.called_with[0].contexts, ["RAG is cool."])
 
-    @patch("backend.app.evaluation_service.trigger_stream_evaluation", new_callable=AsyncMock)
-    @patch("backend.app.get_pipeline_for_model")
+    @patch(
+        "backend.api.dependencies.evaluation_service.trigger_stream_evaluation",
+        new_callable=AsyncMock,
+    )
+    @patch("backend.api.dependencies.get_pipeline_for_model")
     def test_chat_stream_persists_messages_linked_to_session(
         self,
         mock_get_pipeline_for_model,
@@ -121,7 +120,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
 
         mock_evaluate_ragas_for_stream.assert_called_once()
 
-    @patch("backend.app.get_pipeline_for_model")
+    @patch("backend.api.dependencies.get_pipeline_for_model")
     def test_chat_flow_updates_evaluation_record_to_completed(
         self,
         mock_get_pipeline_for_model,
@@ -162,9 +161,9 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             self.assertIsNotNone(assistant.token_count)
             self.assertGreater(assistant.token_count, 0)
 
-    @patch("backend.app.asyncio.create_task")
+    @patch("backend.api.routes.evaluations.asyncio.create_task")
     @patch(
-        "backend.app.evaluation_service.trigger_reevaluation",
+        "backend.api.dependencies.evaluation_service.trigger_reevaluation",
         new_callable=MagicMock,
     )
     def test_reevaluate_message_creates_incremented_pending_version(
@@ -235,9 +234,9 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         mock_reevaluate_existing_message.assert_called_once()
         mock_create_task.assert_called_once()
 
-    @patch("backend.app.asyncio.create_task")
+    @patch("backend.api.routes.evaluations.asyncio.create_task")
     @patch(
-        "backend.app.evaluation_service.trigger_reevaluation",
+        "backend.api.dependencies.evaluation_service.trigger_reevaluation",
         new_callable=MagicMock,
     )
     def test_reevaluate_message_rate_limited_after_three_requests(

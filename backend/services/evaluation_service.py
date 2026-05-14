@@ -103,6 +103,13 @@ class EvaluationService:
             }
         )
 
+    async def publish_score_event_for_evaluation(
+        self,
+        evaluation: Evaluation,
+        message: ChatMessage | None,
+    ) -> None:
+        await self._publish_score_event_for_evaluation(evaluation, message)
+
     async def trigger_evaluation(
         self,
         query: str,
@@ -262,3 +269,15 @@ class EvaluationService:
             evaluation_id=evaluation_id,
             db_bind=db_bind,
         )
+
+    async def score_event_stream(self):
+        subscriber = self._score_broadcaster.subscribe()
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(subscriber.get(), timeout=15)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            self._score_broadcaster.unsubscribe(subscriber)

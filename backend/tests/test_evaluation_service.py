@@ -5,7 +5,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.core import ChatMessage, ChatSession, Evaluation
-from backend.core.evaluation_store import create_pending_evaluation
+from backend.core.evaluation_store import (
+    create_pending_evaluation,
+    mark_evaluation_completed,
+    mark_evaluation_failed,
+)
 from backend.services.evaluation_service import EvaluationService
 
 
@@ -56,9 +60,13 @@ class TestEvaluationService(unittest.IsolatedAsyncioTestCase):
         )
         broadcaster = FakeBroadcaster()
         service = EvaluationService(
-            evaluator_provider=lambda: mock_evaluator,
-            pipeline_factory=lambda _model: None,
+            evaluator=mock_evaluator,
             score_broadcaster=broadcaster,
+            pipeline_factory=lambda _model: None,
+            create_pending_evaluation_fn=create_pending_evaluation,
+            mark_evaluation_completed_fn=mark_evaluation_completed,
+            mark_evaluation_failed_fn=mark_evaluation_failed,
+            token_counter=lambda content: len(content.split()),
         )
 
         await service.trigger_evaluation(
