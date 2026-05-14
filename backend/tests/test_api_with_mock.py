@@ -76,10 +76,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         )
         self.assertEqual(self.mock_evaluator.called_with[0].contexts, ["RAG is cool."])
 
-    @patch(
-        "backend.services.chat_service.ChatService._evaluate_ragas_for_stream",
-        new_callable=AsyncMock,
-    )
+    @patch("backend.app.evaluation_service.trigger_stream_evaluation", new_callable=AsyncMock)
     @patch("backend.app.get_pipeline_for_model")
     def test_chat_stream_persists_messages_linked_to_session(
         self,
@@ -167,7 +164,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
 
     @patch("backend.app.asyncio.create_task")
     @patch(
-        "backend.app.evaluate_ragas_for_existing_message",
+        "backend.app.evaluation_service.trigger_reevaluation",
         new_callable=MagicMock,
     )
     def test_reevaluate_message_creates_incremented_pending_version(
@@ -240,7 +237,7 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
 
     @patch("backend.app.asyncio.create_task")
     @patch(
-        "backend.app.evaluate_ragas_for_existing_message",
+        "backend.app.evaluation_service.trigger_reevaluation",
         new_callable=MagicMock,
     )
     def test_reevaluate_message_rate_limited_after_three_requests(

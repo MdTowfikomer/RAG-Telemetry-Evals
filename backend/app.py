@@ -1,11 +1,10 @@
 import asyncio
-import json
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime
 from math import ceil
 from time import monotonic
-from typing import Any, AsyncGenerator, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
@@ -30,12 +29,11 @@ from backend.core import (
 )
 from backend.core.evaluation_store import (
     create_pending_evaluation,
-    mark_evaluation_completed,
-    mark_evaluation_failed,
 )
 from backend.services.chat_service import ChatService
+from backend.services.evaluation_service import EvaluationService
 
-from .evaluation import EvalContext, RagasEvaluator
+from .evaluation import RagasEvaluator
 
 
 settings = Settings()
@@ -88,27 +86,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Modular RAG API", lifespan=lifespan)
-
-
-class ScoreBroadcaster:
-    def __init__(self):
-        self.subscribers: list[asyncio.Queue[dict[str, Any]]] = []
-
-    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self.subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        if queue in self.subscribers:
-            self.subscribers.remove(queue)
-
-    async def publish(self, event: dict[str, Any]) -> None:
-        for subscriber in list(self.subscribers):
-            await subscriber.put(event)
-
-
-score_broadcaster = ScoreBroadcaster()
 
 
 class InMemoryRateLimiter:
@@ -196,6 +173,11 @@ evaluator = RagasEvaluator(
     embeddings=embeddings,
 )
 
+evaluation_service = EvaluationService(
+    evaluator_provider=lambda: evaluator,
+    pipeline_factory=lambda model: get_pipeline_for_model(model),
+)
+
 
 # Models
 class ChatRequest(BaseModel):
@@ -275,89 +257,6 @@ def build_message_evaluation_response(
     )
 
 
-async def publish_score_event_for_evaluation(
-    evaluation: Evaluation,
-    message: ChatMessage | None,
-) -> None:
-    await score_broadcaster.publish(
-        {
-            "type": "score",
-            "message_id": str(evaluation.message_id),
-            "faithfulness": evaluation.faithfulness,
-            "answer_relevancy": evaluation.answer_relevancy,
-            "reasoning": evaluation.reasoning,
-            "status": evaluation.status,
-            "version": evaluation.version,
-            "latency_ms": None if message is None else message.latency_ms,
-            "token_count": None if message is None else message.token_count,
-        }
-    )
-
-
-async def evaluate_ragas(
-    query: str,
-    answer: str,
-    contexts: List[str],
-    evaluation_id: UUID,
-    db_bind,
-    parent_context=None,
-):
-    """
-    Background task to compute Ragas metrics using the Evaluation Engine Service.
-    """
-    if parent_context:
-        otel_context.attach(parent_context)
-
-    try:
-        print("Delegating to Evaluation Engine Service...")
-        scores = await evaluator.evaluate(
-            EvalContext(query=query, answer=answer, contexts=contexts)
-        )
-        raw_faithfulness = scores.get("faithfulness")
-        faithfulness = (
-            float(raw_faithfulness)
-            if isinstance(raw_faithfulness, (int, float))
-            else None
-        )
-        raw_answer_relevancy = scores.get("answer_relevancy")
-        answer_relevancy = (
-            float(raw_answer_relevancy)
-            if isinstance(raw_answer_relevancy, (int, float))
-            else None
-        )
-        raw_reasoning = scores.get("reasoning")
-        reasoning = (
-            raw_reasoning
-            if isinstance(raw_reasoning, str) and raw_reasoning.strip()
-            else "Ragas evaluation completed successfully."
-        )
-
-        with Session(db_bind) as evaluation_db:
-            updated_eval = mark_evaluation_completed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                faithfulness=faithfulness,
-                answer_relevancy=answer_relevancy,
-                reasoning=reasoning,
-            )
-
-            if updated_eval is not None:
-                message = evaluation_db.get(ChatMessage, updated_eval.message_id)
-                await publish_score_event_for_evaluation(updated_eval, message)
-    except Exception as e:
-        with Session(db_bind) as evaluation_db:
-            updated_eval = mark_evaluation_failed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                error_message=str(e),
-            )
-
-            if updated_eval is not None:
-                await publish_score_event_for_evaluation(updated_eval, None)
-
-        print(f"Error in Ragas evaluation delegation: {e}")
-
-
 def estimate_token_count(content: str) -> int:
     return len(content.split())
 
@@ -368,102 +267,7 @@ def get_chat_service() -> ChatService:
         pipeline_factory=get_pipeline_for_model,
         token_counter=estimate_token_count,
         create_pending_evaluation_fn=create_pending_evaluation,
-        evaluate_ragas_fn=evaluate_ragas,
-    )
-
-
-async def evaluate_ragas_for_stream(
-    query: str,
-    answer: str,
-    k: int,
-    model: str,
-    evaluation_id: UUID,
-    db_bind,
-) -> None:
-    try:
-        pipeline = get_pipeline_for_model(model)
-        docs = await pipeline.prepare_context(query, k=k)
-        contexts = [doc.page_content for doc in docs]
-        await evaluate_ragas(
-            query=query,
-            answer=answer,
-            contexts=contexts,
-            evaluation_id=evaluation_id,
-            db_bind=db_bind,
-        )
-    except Exception as e:
-        print(f"Error in streaming evaluation delegation: {e}")
-
-
-async def evaluate_ragas_for_existing_message(
-    message_id: UUID,
-    k: int,
-    model: str,
-    evaluation_id: UUID,
-    db_bind,
-) -> None:
-    with Session(db_bind) as evaluation_db:
-        assistant_message = evaluation_db.get(ChatMessage, message_id)
-        if assistant_message is None:
-            updated_eval = mark_evaluation_failed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                error_message="Assistant message not found for re-evaluation.",
-            )
-            if updated_eval is not None:
-                await publish_score_event_for_evaluation(updated_eval, None)
-            return
-
-        if assistant_message.role != "assistant":
-            updated_eval = mark_evaluation_failed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                error_message="Only assistant messages can be re-evaluated.",
-            )
-            if updated_eval is not None:
-                await publish_score_event_for_evaluation(updated_eval, assistant_message)
-            return
-
-        latest_user_message = evaluation_db.exec(
-            select(ChatMessage)
-            .where(
-                ChatMessage.session_id == assistant_message.session_id,
-                ChatMessage.role == "user",
-                ChatMessage.created_at <= assistant_message.created_at,
-            )
-            .order_by(desc(col(ChatMessage.created_at)))
-        ).first()
-
-        if latest_user_message is None:
-            updated_eval = mark_evaluation_failed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                error_message="No user message found to evaluate this assistant answer.",
-            )
-            if updated_eval is not None:
-                await publish_score_event_for_evaluation(updated_eval, assistant_message)
-            return
-
-        if not assistant_message.content.strip():
-            updated_eval = mark_evaluation_failed(
-                db=evaluation_db,
-                evaluation_id=evaluation_id,
-                error_message="Assistant message content is empty.",
-            )
-            if updated_eval is not None:
-                await publish_score_event_for_evaluation(updated_eval, assistant_message)
-            return
-
-        query = latest_user_message.content
-        answer = assistant_message.content
-
-    await evaluate_ragas_for_stream(
-        query=query,
-        answer=answer,
-        k=k,
-        model=model,
-        evaluation_id=evaluation_id,
-        db_bind=db_bind,
+        evaluation_service=evaluation_service,
     )
 
 
@@ -642,10 +446,10 @@ async def reevaluate_assistant_message(
         db=db,
         message_id=message.id,
     )
-    await publish_score_event_for_evaluation(evaluation_record, message)
+    await evaluation_service.publish_score_event_for_evaluation(evaluation_record, message)
 
     asyncio.create_task(
-        evaluate_ragas_for_existing_message(
+        evaluation_service.trigger_reevaluation(
             message_id=message.id,
             k=reevaluate_request.k,
             model=reevaluate_request.model,
@@ -705,20 +509,10 @@ async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_d
 
 @app.get("/scores/stream")
 async def scores_stream_endpoint():
-    async def event_generator() -> AsyncGenerator[str, None]:
-        subscriber = score_broadcaster.subscribe()
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(subscriber.get(), timeout=15)
-                    yield f"data: {json.dumps(event)}\n\n"
-                except TimeoutError:
-                    # SSE keep-alive to prevent idle intermediaries from dropping the connection.
-                    yield ": keep-alive\n\n"
-        finally:
-            score_broadcaster.unsubscribe(subscriber)
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        evaluation_service.score_event_stream(),
+        media_type="text/event-stream",
+    )
 
 
 @app.get("/health")

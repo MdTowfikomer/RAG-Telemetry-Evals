@@ -27,14 +27,16 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
                 id=UUID("00000000-0000-0000-0000-000000000001"), message_id=message_id
             )
         )
-        self.mock_evaluate_ragas_fn = AsyncMock()
+        self.mock_evaluation_service = MagicMock()
+        self.mock_evaluation_service.trigger_evaluation = AsyncMock()
+        self.mock_evaluation_service.trigger_stream_evaluation = AsyncMock()
 
         self.chat_service = ChatService(
             tracer=self.mock_tracer,
             pipeline_factory=self.mock_pipeline_factory,
             token_counter=self.mock_token_counter,
             create_pending_evaluation_fn=self.mock_create_pending_evaluation_fn,
-            evaluate_ragas_fn=self.mock_evaluate_ragas_fn,
+            evaluation_service=self.mock_evaluation_service,
         )
 
     def tearDown(self):
@@ -91,7 +93,10 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[1].content, "Test response")
 
         self.assertEqual(len(task_spawner_calls), 1)
-        self.assertEqual(task_spawner_calls[0]["func"], self.chat_service._evaluate_ragas)
+        self.assertEqual(
+            task_spawner_calls[0]["func"],
+            self.mock_evaluation_service.trigger_evaluation,
+        )
 
     async def test_chat_uses_existing_session(self):
         db_gen = self.get_db()

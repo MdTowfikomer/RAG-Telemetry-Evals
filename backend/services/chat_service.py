@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import AsyncGenerator, Awaitable, Callable
+from typing import AsyncGenerator, Callable
 from uuid import UUID
 
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -35,13 +35,13 @@ class ChatService:
         pipeline_factory: Callable[[str | None], object],
         token_counter: Callable[[str], int],
         create_pending_evaluation_fn: Callable[..., object],
-        evaluate_ragas_fn: Callable[..., Awaitable[None]],
+        evaluation_service,
     ) -> None:
         self._tracer = tracer
         self._pipeline_factory = pipeline_factory
         self._token_counter = token_counter
         self._create_pending_evaluation = create_pending_evaluation_fn
-        self._evaluate_ragas = evaluate_ragas_fn
+        self._evaluation_service = evaluation_service
 
     async def chat(
         self,
@@ -95,7 +95,7 @@ class ChatService:
             )
 
             task_spawner(
-                self._evaluate_ragas,
+                self._evaluation_service.trigger_evaluation,
                 query,
                 answer,
                 contexts,
@@ -189,30 +189,6 @@ class ChatService:
 
             persistence_db.commit()
 
-    async def _evaluate_ragas_for_stream(
-        self,
-        *,
-        query: str,
-        answer: str,
-        k: int,
-        model: str,
-        evaluation_id: UUID,
-        db_bind,
-    ) -> None:
-        try:
-            pipeline = self._pipeline_factory(model)
-            docs = await pipeline.prepare_context(query, k=k)
-            contexts = [doc.page_content for doc in docs]
-            await self._evaluate_ragas(
-                query=query,
-                answer=answer,
-                contexts=contexts,
-                evaluation_id=evaluation_id,
-                db_bind=db_bind,
-            )
-        except Exception as error:
-            print(f"Error in streaming evaluation delegation: {error}")
-
     async def _stream_response(
         self,
         *,
@@ -256,7 +232,7 @@ class ChatService:
 
             if final_answer.strip():
                 asyncio.create_task(
-                    self._evaluate_ragas_for_stream(
+                    self._evaluation_service.trigger_stream_evaluation(
                         query=query,
                         answer=final_answer,
                         k=k,
