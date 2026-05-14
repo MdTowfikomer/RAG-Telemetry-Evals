@@ -31,11 +31,9 @@ from backend.core.evaluation_store import (
     mark_evaluation_completed,
     mark_evaluation_failed,
 )
+from backend.services.chat_service import ChatService
 
-try:
-    from evaluation import EvalContext, RagasEvaluator
-except ImportError:
-    from .evaluation import EvalContext, RagasEvaluator
+from .evaluation import EvalContext, RagasEvaluator
 
 
 settings = Settings()
@@ -363,6 +361,17 @@ def estimate_token_count(content: str) -> int:
     return len(content.split())
 
 
+def get_chat_service() -> ChatService:
+    return ChatService(
+        tracer=tracer,
+        pipeline_factory=get_pipeline_for_model,
+        token_counter=estimate_token_count,
+        create_pending_evaluation_fn=create_pending_evaluation,
+        evaluate_ragas_fn=evaluate_ragas,
+        stream_response_factory=sse_stream_response,
+    )
+
+
 async def persist_assistant_message(
     assistant_message_id: UUID,
     content: str,
@@ -548,71 +557,22 @@ async def chat_endpoint(
     db: Session = Depends(get_db),
 ):
     try:
-        with tracer.start_as_current_span("chat_flow") as span:
-            span.set_attribute("chat.query", request.query)
-
-            # 1. Get or Create Session
-            if request.session_id:
-                session = db.get(ChatSession, request.session_id)
-                if not session:
-                    raise HTTPException(status_code=404, detail="Session not found")
-            else:
-                session = ChatSession(title=request.query[:50] + "...")
-                db.add(session)
-                db.commit()
-                db.refresh(session)
-
-            # 2. Persist User Message
-            user_msg = ChatMessage(
-                session_id=session.id, role="user", content=request.query
-            )
-            db.add(user_msg)
-            db.commit()
-            db.refresh(user_msg)
-
-            # 3. Execute RAG Pipeline
-            pipeline = get_pipeline_for_model(request.model)
-            response_started_at = perf_counter()
-            answer, docs = await pipeline.execute(request.query, k=request.k)
-            elapsed_ms = int((perf_counter() - response_started_at) * 1000)
-            contexts = [doc.page_content for doc in docs]
-
-            # 4. Persist Assistant Message
-            assistant_msg = ChatMessage(
-                session_id=session.id,
-                role="assistant",
-                content=answer,
-                latency_ms=elapsed_ms,
-                token_count=estimate_token_count(answer),
-            )
-            db.add(assistant_msg)
-            db.commit()
-            db.refresh(assistant_msg)
-
-            # 5. Create Evaluation record and trigger async evaluation
-            evaluation_record = create_pending_evaluation(
-                db=db,
-                message_id=assistant_msg.id,
-            )
-
-            current_context = otel_context.get_current()
-            background_tasks.add_task(
-                evaluate_ragas,
-                request.query,
-                answer,
-                contexts,
-                evaluation_record.id,
-                db.get_bind(),
-                current_context,
-            )
-
-            return ChatResponse(
-                id=assistant_msg.id,
-                session_id=session.id,
-                query=request.query,
-                response=answer,
-                source_documents=contexts,
-            )
+        chat_service = get_chat_service()
+        result = await chat_service.chat(
+            query=request.query,
+            session_id=request.session_id,
+            k=request.k,
+            model=request.model,
+            db=db,
+            background_tasks=background_tasks,
+        )
+        return ChatResponse(
+            id=result.id,
+            session_id=result.session_id,
+            query=result.query,
+            response=result.response,
+            source_documents=result.source_documents,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -771,41 +731,6 @@ async def reevaluate_assistant_message(
     return build_message_evaluation_response(evaluation_record)
 
 
-def prepare_stream_messages(
-    db: Session,
-    query: str,
-    session_id: Optional[UUID],
-) -> tuple[ChatSession, ChatMessage, ChatMessage, Evaluation]:
-    if session_id:
-        session = db.get(ChatSession, session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-    else:
-        session = ChatSession(title=query[:50] + "...")
-        db.add(session)
-        db.commit()
-        db.refresh(session)
-
-    user_msg = ChatMessage(session_id=session.id, role="user", content=query)
-    assistant_msg = ChatMessage(session_id=session.id, role="assistant", content="")
-    db.add(user_msg)
-    db.add(assistant_msg)
-
-    session.updated_at = datetime.now(UTC)
-    db.add(session)
-
-    db.commit()
-    db.refresh(user_msg)
-    db.refresh(assistant_msg)
-
-    evaluation_record = create_pending_evaluation(
-        db=db,
-        message_id=assistant_msg.id,
-    )
-
-    return session, user_msg, assistant_msg, evaluation_record
-
-
 @app.get("/chat/stream")
 async def chat_stream_get_endpoint(
     query: str,
@@ -814,46 +739,34 @@ async def chat_stream_get_endpoint(
     session_id: Optional[UUID] = None,
     db: Session = Depends(get_db),
 ):
-    session, user_msg, assistant_msg, evaluation_record = prepare_stream_messages(
-        db=db,
+    chat_service = get_chat_service()
+    stream_result = chat_service.chat_stream(
         query=query,
         session_id=session_id,
+        k=k,
+        model=model,
+        db=db,
     )
 
     return StreamingResponse(
-        sse_stream_response(
-            query=query,
-            k=k,
-            model=model,
-            session_id=session.id,
-            user_message_id=user_msg.id,
-            assistant_message_id=assistant_msg.id,
-            db_bind=db.get_bind(),
-            evaluation_id=evaluation_record.id,
-        ),
+        stream_result.stream,
         media_type="text/event-stream",
     )
 
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
-    session, user_msg, assistant_msg, evaluation_record = prepare_stream_messages(
-        db=db,
+    chat_service = get_chat_service()
+    stream_result = chat_service.chat_stream(
         query=request.query,
         session_id=request.session_id,
+        k=request.k,
+        model=request.model,
+        db=db,
     )
 
     return StreamingResponse(
-        sse_stream_response(
-            query=request.query,
-            k=request.k,
-            model=request.model,
-            session_id=session.id,
-            user_message_id=user_msg.id,
-            assistant_message_id=assistant_msg.id,
-            db_bind=db.get_bind(),
-            evaluation_id=evaluation_record.id,
-        ),
+        stream_result.stream,
         media_type="text/event-stream",
     )
 

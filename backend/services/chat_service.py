@@ -1,6 +1,7 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from time import perf_counter
-from typing import Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
 from fastapi import BackgroundTasks, HTTPException
@@ -19,6 +20,11 @@ class ChatResult:
     source_documents: list[str]
 
 
+@dataclass
+class ChatStreamResult:
+    stream: AsyncGenerator[str, None]
+
+
 class ChatService:
     def __init__(
         self,
@@ -28,12 +34,14 @@ class ChatService:
         token_counter: Callable[[str], int],
         create_pending_evaluation_fn: Callable[..., object],
         evaluate_ragas_fn: Callable[..., Awaitable[None]],
+        stream_response_factory: Callable[..., AsyncGenerator[str, None]],
     ) -> None:
         self._tracer = tracer
         self._pipeline_factory = pipeline_factory
         self._token_counter = token_counter
         self._create_pending_evaluation = create_pending_evaluation_fn
         self._evaluate_ragas = evaluate_ragas_fn
+        self._stream_response_factory = stream_response_factory
 
     async def chat(
         self,
@@ -103,3 +111,55 @@ class ChatService:
                 response=answer,
                 source_documents=contexts,
             )
+
+    def chat_stream(
+        self,
+        *,
+        query: str,
+        session_id: UUID | None,
+        k: int,
+        model: str,
+        db: SQLAlchemySession,
+    ) -> ChatStreamResult:
+        with self._tracer.start_as_current_span("chat_stream_flow") as span:
+            span.set_attribute("chat.query", query)
+
+            if session_id:
+                session = db.get(ChatSession, session_id)
+                if not session:
+                    raise HTTPException(status_code=404, detail="Session not found")
+            else:
+                session = ChatSession(title=query[:50] + "...")
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+
+            user_msg = ChatMessage(session_id=session.id, role="user", content=query)
+            assistant_msg = ChatMessage(session_id=session.id, role="assistant", content="")
+            db.add(user_msg)
+            db.add(assistant_msg)
+
+            session.updated_at = datetime.now(UTC)
+            db.add(session)
+
+            db.commit()
+            db.refresh(user_msg)
+            db.refresh(assistant_msg)
+
+            evaluation_record = self._create_pending_evaluation(
+                db=db,
+                message_id=assistant_msg.id,
+            )
+
+            stream = self._stream_response_factory(
+                query=query,
+                k=k,
+                model=model,
+                session_id=session.id,
+                user_message_id=user_msg.id,
+                assistant_message_id=assistant_msg.id,
+                db_bind=db.get_bind(),
+                evaluation_id=evaluation_record.id,
+            )
+
+            return ChatStreamResult(stream=stream)
