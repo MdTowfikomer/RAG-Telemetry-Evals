@@ -28,6 +28,7 @@ function App() {
     clearChat,
     loadSession,
     selectAssistantMessage,
+    reevaluateAssistantMessage,
   } = useChat(settings);
 
   const handleSendQuery = async () => {
@@ -58,6 +59,9 @@ function App() {
           onClearChat={clearChat}
           onSelectAssistantMessage={(messageId) => {
             void selectAssistantMessage(messageId);
+          }}
+          onReevaluateAssistantMessage={(messageId) => {
+            void reevaluateAssistantMessage(messageId);
           }}
           selectedMessageId={selectedMessageId}
           errorMessage={errorMessage}

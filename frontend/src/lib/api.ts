@@ -89,6 +89,33 @@ export const api = {
     return (await response.json()) as MessageEvaluationVersion[];
   },
 
+  async triggerMessageReevaluation(
+    messageId: string,
+    settings: ChatSettings,
+  ): Promise<MessageEvaluationVersion> {
+    const response = await fetch(
+      `${API_BASE_URL}/messages/${encodeURIComponent(messageId)}/re-evaluate`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          k: settings.topK,
+          model: settings.model,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Re-evaluation request failed with status ${response.status}`,
+      );
+    }
+
+    return (await response.json()) as MessageEvaluationVersion;
+  },
+
   async fetchContext(
     query: string,
     settings: ChatSettings,

@@ -102,6 +102,37 @@ describe("api adapter", () => {
     expect(versions[0].message_id).toBe("assistant-1");
   });
 
+  it("triggerMessageReevaluation posts settings and returns pending version", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "eval-2",
+        message_id: "assistant-1",
+        version: 2,
+        status: "pending",
+        created_at: "2026-01-01T00:00:02Z",
+        updated_at: "2026-01-01T00:00:02Z",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const evaluation = await api.triggerMessageReevaluation("assistant-1", settings);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      "/messages/assistant-1/re-evaluate",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ k: 3, model: "google/gemini-2.0-flash-001" }),
+    );
+    expect(evaluation.version).toBe(2);
+    expect(evaluation.status).toBe("pending");
+  });
+
   it("fetchContext maps backend response into ContextDoc items", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

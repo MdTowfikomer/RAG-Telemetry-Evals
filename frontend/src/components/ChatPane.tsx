@@ -11,6 +11,7 @@ interface ChatPaneProps {
   onSendQuery: () => Promise<void>;
   onClearChat: () => void;
   onSelectAssistantMessage: (messageId: string) => void;
+  onReevaluateAssistantMessage: (messageId: string) => void;
   selectedMessageId: string | null;
   errorMessage: string | null;
 }
@@ -23,6 +24,7 @@ function ChatPane({
   onSendQuery,
   onClearChat,
   onSelectAssistantMessage,
+  onReevaluateAssistantMessage,
   selectedMessageId,
   errorMessage,
 }: ChatPaneProps) {
@@ -83,6 +85,20 @@ function ChatPane({
                 : ""
             }
           >
+            {message.role === "assistant" && !message.id.startsWith("msg-") && (
+              <div className="mb-1 flex justify-end px-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition hover:border-cyan-500 hover:text-cyan-200"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onReevaluateAssistantMessage(message.id);
+                  }}
+                >
+                  Re-evaluate
+                </button>
+              </div>
+            )}
             <MessageBubble message={message} />
           </div>
         ))}

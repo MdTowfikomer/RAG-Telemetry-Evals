@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -43,6 +43,9 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         import backend.app
 
         backend.app.evaluator = self.mock_evaluator
+        import asyncio
+
+        asyncio.run(backend.app.reevaluate_rate_limiter.reset())
 
     def tearDown(self):
         # Restore real evaluator
@@ -158,3 +161,122 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
             self.assertGreaterEqual(assistant.latency_ms, 0)
             self.assertIsNotNone(assistant.token_count)
             self.assertGreater(assistant.token_count, 0)
+
+    @patch("backend.app.asyncio.create_task")
+    @patch(
+        "backend.app.evaluate_ragas_for_existing_message",
+        new_callable=MagicMock,
+    )
+    def test_reevaluate_message_creates_incremented_pending_version(
+        self,
+        mock_reevaluate_existing_message,
+        mock_create_task,
+    ):
+        with Session(self.engine) as session:
+            chat_session = ChatSession(title="Existing chat")
+            session.add(chat_session)
+            session.commit()
+            session.refresh(chat_session)
+
+            user_message = ChatMessage(
+                session_id=chat_session.id,
+                role="user",
+                content="What is RAG?",
+            )
+            assistant_message = ChatMessage(
+                session_id=chat_session.id,
+                role="assistant",
+                content="RAG uses retrieval and generation.",
+                latency_ms=100,
+                token_count=8,
+            )
+            session.add(user_message)
+            session.add(assistant_message)
+            session.commit()
+            session.refresh(assistant_message)
+
+            first_eval = Evaluation(
+                message_id=assistant_message.id,
+                version=1,
+                status="completed",
+                faithfulness=0.9,
+                answer_relevancy=0.89,
+                reasoning="Initial evaluation",
+            )
+            session.add(first_eval)
+            session.commit()
+
+            assistant_message_id = assistant_message.id
+
+        response = self.client.post(
+            f"/messages/{assistant_message_id}/re-evaluate",
+            json={"k": 3, "model": "test-model"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["status"], "pending")
+        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["message_id"], str(assistant_message_id))
+
+        with Session(self.engine) as session:
+            evaluations = session.exec(
+                select(Evaluation)
+                .where(Evaluation.message_id == assistant_message_id)
+                .order_by(asc(col(Evaluation.version)))
+            ).all()
+
+            self.assertEqual(len(evaluations), 2)
+            self.assertEqual(evaluations[0].version, 1)
+            self.assertEqual(evaluations[0].status, "completed")
+            self.assertEqual(evaluations[1].version, 2)
+            self.assertEqual(evaluations[1].status, "pending")
+
+        mock_reevaluate_existing_message.assert_called_once()
+        mock_create_task.assert_called_once()
+
+    @patch("backend.app.asyncio.create_task")
+    @patch(
+        "backend.app.evaluate_ragas_for_existing_message",
+        new_callable=MagicMock,
+    )
+    def test_reevaluate_message_rate_limited_after_three_requests(
+        self,
+        _mock_reevaluate_existing_message,
+        _mock_create_task,
+    ):
+        with Session(self.engine) as session:
+            chat_session = ChatSession(title="Rate limit chat")
+            session.add(chat_session)
+            session.commit()
+            session.refresh(chat_session)
+
+            user_message = ChatMessage(
+                session_id=chat_session.id,
+                role="user",
+                content="What is RAG?",
+            )
+            assistant_message = ChatMessage(
+                session_id=chat_session.id,
+                role="assistant",
+                content="RAG uses retrieval and generation.",
+            )
+            session.add(user_message)
+            session.add(assistant_message)
+            session.commit()
+            session.refresh(assistant_message)
+            assistant_message_id = assistant_message.id
+
+        for _ in range(3):
+            response = self.client.post(
+                f"/messages/{assistant_message_id}/re-evaluate",
+                json={"k": 3, "model": "test-model"},
+            )
+            self.assertEqual(response.status_code, 202)
+
+        limited = self.client.post(
+            f"/messages/{assistant_message_id}/re-evaluate",
+            json={"k": 3, "model": "test-model"},
+        )
+        self.assertEqual(limited.status_code, 429)
+        self.assertIn("Retry-After", limited.headers)

@@ -21,6 +21,43 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+function mapEvaluationVersion(version: {
+  id: string;
+  message_id: string;
+  version: number;
+  status: "pending" | "completed" | "failed";
+  faithfulness?: number | null;
+  answer_relevancy?: number | null;
+  reasoning?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}): MessageEvaluationVersion {
+  return {
+    id: version.id,
+    messageId: version.message_id,
+    version: version.version,
+    status: version.status,
+    faithfulness:
+      typeof version.faithfulness === "number" ? version.faithfulness : undefined,
+    answerRelevancy:
+      typeof version.answer_relevancy === "number"
+        ? version.answer_relevancy
+        : undefined,
+    reasoning: typeof version.reasoning === "string" ? version.reasoning : undefined,
+    errorMessage:
+      typeof version.error_message === "string" ? version.error_message : undefined,
+    createdAt: version.created_at,
+    updatedAt: version.updated_at,
+  };
+}
+
 export function useChat(settings: ChatSettings) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
@@ -39,6 +76,25 @@ export function useChat(settings: ChatSettings) {
   const scoresCleanupRef = useRef<(() => void) | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const assistantIdAliasRef = useRef<Record<string, string>>({});
+  const selectedMessageIdRef = useRef<string | null>(null);
+
+  const loadEvaluationHistory = async (messageId: string) => {
+    if (!isUuid(messageId)) {
+      setEvaluationHistory([]);
+      return;
+    }
+
+    try {
+      const versions = await api.fetchMessageEvaluations(messageId);
+      setEvaluationHistory(versions.map(mapEvaluationVersion));
+    } catch {
+      setEvaluationHistory([]);
+    }
+  };
+
+  useEffect(() => {
+    selectedMessageIdRef.current = selectedMessageId;
+  }, [selectedMessageId]);
 
   const refreshSessions = async () => {
     const nextSessions = await api.fetchSessions();
@@ -88,6 +144,21 @@ export function useChat(settings: ChatSettings) {
             };
           }),
         );
+
+        if (
+          selectedMessageIdRef.current !== null &&
+          (selectedMessageIdRef.current === event.message_id ||
+            selectedMessageIdRef.current === aliasId)
+        ) {
+          const messageIdForHistory =
+            selectedMessageIdRef.current === aliasId
+              ? event.message_id
+              : selectedMessageIdRef.current;
+          if (selectedMessageIdRef.current === aliasId) {
+            setSelectedMessageId(event.message_id);
+          }
+          void loadEvaluationHistory(messageIdForHistory);
+        }
       },
       () => {
         // Intentionally ignore score stream errors in UI state.
@@ -162,35 +233,39 @@ export function useChat(settings: ChatSettings) {
 
   const selectAssistantMessage = async (messageId: string) => {
     setSelectedMessageId(messageId);
+    await loadEvaluationHistory(messageId);
+  };
+
+  const reevaluateAssistantMessage = async (messageId: string) => {
+    if (!isUuid(messageId)) {
+      return;
+    }
 
     try {
-      const versions = await api.fetchMessageEvaluations(messageId);
-      const mapped: MessageEvaluationVersion[] = versions.map((version) => ({
-        id: version.id,
-        messageId: version.message_id,
-        version: version.version,
-        status: version.status,
-        faithfulness:
-          typeof version.faithfulness === "number"
-            ? version.faithfulness
-            : undefined,
-        answerRelevancy:
-          typeof version.answer_relevancy === "number"
-            ? version.answer_relevancy
-            : undefined,
-        reasoning:
-          typeof version.reasoning === "string" ? version.reasoning : undefined,
-        errorMessage:
-          typeof version.error_message === "string"
-            ? version.error_message
-            : undefined,
-        createdAt: version.created_at,
-        updatedAt: version.updated_at,
-      }));
+      const pending = await api.triggerMessageReevaluation(messageId, settings);
+      setErrorMessage(null);
 
-      setEvaluationHistory(mapped);
-    } catch {
-      setEvaluationHistory([]);
+      setMessages((previous) =>
+        previous.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                evaluationStatus: pending.status,
+                evaluationVersion: pending.version,
+              }
+            : message,
+        ),
+      );
+
+      if (selectedMessageIdRef.current === messageId) {
+        await loadEvaluationHistory(messageId);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not trigger re-evaluation for this message.";
+      setErrorMessage(message);
     }
   };
 
@@ -295,6 +370,13 @@ export function useChat(settings: ChatSettings) {
             }),
           );
 
+          if (
+            selectedMessageIdRef.current === activeAssistantMessageId ||
+            selectedMessageIdRef.current === assistantMessageId
+          ) {
+            setSelectedMessageId(meta.assistant_message_id);
+          }
+
           activeUserMessageId = meta.user_message_id;
           activeAssistantMessageId = meta.assistant_message_id;
         },
@@ -340,5 +422,6 @@ export function useChat(settings: ChatSettings) {
     loadSession,
     refreshSessions,
     selectAssistantMessage,
+    reevaluateAssistantMessage,
   };
 }

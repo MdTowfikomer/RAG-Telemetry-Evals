@@ -9,6 +9,7 @@ vi.mock("../lib/api", () => ({
     fetchSessions: vi.fn(),
     fetchSessionMessages: vi.fn(),
     fetchMessageEvaluations: vi.fn(),
+    triggerMessageReevaluation: vi.fn(),
     streamScores: vi.fn(),
     streamChat: vi.fn(),
   },
@@ -192,10 +193,11 @@ describe("useChat", () => {
   });
 
   it("loads evaluation version history for selected assistant message", async () => {
+    const assistantId = "5a041fcd-1454-4ba8-be07-9b35d1f9379d";
     vi.mocked(api.fetchMessageEvaluations).mockResolvedValue([
       {
         id: "eval-2",
-        message_id: "assistant-1",
+        message_id: assistantId,
         version: 2,
         status: "completed",
         faithfulness: 0.93,
@@ -207,7 +209,7 @@ describe("useChat", () => {
       },
       {
         id: "eval-1",
-        message_id: "assistant-1",
+        message_id: assistantId,
         version: 1,
         status: "failed",
         faithfulness: null,
@@ -222,13 +224,80 @@ describe("useChat", () => {
     const { result } = renderHook(() => useChat(settings));
 
     await act(async () => {
-      await result.current.selectAssistantMessage("assistant-1");
+      await result.current.selectAssistantMessage(assistantId);
     });
 
-    expect(result.current.selectedMessageId).toBe("assistant-1");
+    expect(result.current.selectedMessageId).toBe(assistantId);
     expect(result.current.evaluationHistory).toHaveLength(2);
     expect(result.current.evaluationHistory[0].version).toBe(2);
     expect(result.current.evaluationHistory[1].status).toBe("failed");
+  });
+
+  it("triggers re-evaluation and updates selected assistant version", async () => {
+    const assistantId = "5a041fcd-1454-4ba8-be07-9b35d1f9379d";
+    vi.mocked(api.fetchSessionMessages).mockResolvedValue([
+      {
+        id: "user-1",
+        session_id: "session-1",
+        role: "user",
+        content: "What is RAG?",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: assistantId,
+        session_id: "session-1",
+        role: "assistant",
+        content: "RAG combines retrieval and generation.",
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    ]);
+
+    vi.mocked(api.fetchMessageEvaluations).mockResolvedValue([
+      {
+        id: "eval-2",
+        message_id: assistantId,
+        version: 2,
+        status: "pending",
+        faithfulness: null,
+        answer_relevancy: null,
+        reasoning: null,
+        error_message: null,
+        created_at: "2026-01-01T00:00:02Z",
+        updated_at: "2026-01-01T00:00:02Z",
+      },
+    ]);
+
+    vi.mocked(api.triggerMessageReevaluation).mockResolvedValue({
+      id: "eval-2",
+      message_id: assistantId,
+      version: 2,
+      status: "pending",
+      faithfulness: null,
+      answer_relevancy: null,
+      reasoning: null,
+      error_message: null,
+      created_at: "2026-01-01T00:00:02Z",
+      updated_at: "2026-01-01T00:00:02Z",
+    });
+
+    const { result } = renderHook(() => useChat(settings));
+
+    await act(async () => {
+      await result.current.loadSession("session-1");
+      await result.current.selectAssistantMessage(assistantId);
+      await result.current.reevaluateAssistantMessage(assistantId);
+    });
+
+    const assistant = result.current.messages.find(
+      (message) => message.id === assistantId,
+    );
+    expect(assistant?.evaluationStatus).toBe("pending");
+    expect(assistant?.evaluationVersion).toBe(2);
+    expect(result.current.evaluationHistory[0]?.version).toBe(2);
+    expect(api.triggerMessageReevaluation).toHaveBeenCalledWith(
+      assistantId,
+      settings,
+    );
   });
 
   it("clears chat and stops active stream", async () => {
