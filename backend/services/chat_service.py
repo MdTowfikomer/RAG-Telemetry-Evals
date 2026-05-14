@@ -4,11 +4,10 @@ from time import perf_counter
 from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
-from fastapi import BackgroundTasks, HTTPException
-from opentelemetry import context as otel_context
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 from backend.core import ChatMessage, ChatSession
+from backend.core.exceptions import SessionNotFoundError
 
 
 @dataclass
@@ -51,7 +50,8 @@ class ChatService:
         k: int,
         model: str,
         db: SQLAlchemySession,
-        background_tasks: BackgroundTasks,
+        task_spawner: Callable[..., None],
+        parent_context=None,
     ) -> ChatResult:
         with self._tracer.start_as_current_span("chat_flow") as span:
             span.set_attribute("chat.query", query)
@@ -59,7 +59,7 @@ class ChatService:
             if session_id:
                 session = db.get(ChatSession, session_id)
                 if not session:
-                    raise HTTPException(status_code=404, detail="Session not found")
+                    raise SessionNotFoundError("Session not found")
             else:
                 session = ChatSession(title=query[:50] + "...")
                 db.add(session)
@@ -93,15 +93,14 @@ class ChatService:
                 message_id=assistant_msg.id,
             )
 
-            current_context = otel_context.get_current()
-            background_tasks.add_task(
+            task_spawner(
                 self._evaluate_ragas,
                 query,
                 answer,
                 contexts,
                 evaluation_record.id,
                 db.get_bind(),
-                current_context,
+                parent_context,
             )
 
             return ChatResult(
@@ -127,7 +126,7 @@ class ChatService:
             if session_id:
                 session = db.get(ChatSession, session_id)
                 if not session:
-                    raise HTTPException(status_code=404, detail="Session not found")
+                    raise SessionNotFoundError("Session not found")
             else:
                 session = ChatSession(title=query[:50] + "...")
                 db.add(session)

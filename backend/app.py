@@ -24,6 +24,7 @@ from backend.core import (
     Evaluation,
     InfrastructureFactory,
     RAGPipeline,
+    SessionNotFoundError,
     Settings,
     TracingHook,
 )
@@ -558,13 +559,15 @@ async def chat_endpoint(
 ):
     try:
         chat_service = get_chat_service()
+        current_context = otel_context.get_current()
         result = await chat_service.chat(
             query=request.query,
             session_id=request.session_id,
             k=request.k,
             model=request.model,
             db=db,
-            background_tasks=background_tasks,
+            task_spawner=background_tasks.add_task,
+            parent_context=current_context,
         )
         return ChatResponse(
             id=result.id,
@@ -573,6 +576,8 @@ async def chat_endpoint(
             response=result.response,
             source_documents=result.source_documents,
         )
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
     except HTTPException:
         raise
     except Exception as e:
@@ -739,14 +744,17 @@ async def chat_stream_get_endpoint(
     session_id: Optional[UUID] = None,
     db: Session = Depends(get_db),
 ):
-    chat_service = get_chat_service()
-    stream_result = chat_service.chat_stream(
-        query=query,
-        session_id=session_id,
-        k=k,
-        model=model,
-        db=db,
-    )
+    try:
+        chat_service = get_chat_service()
+        stream_result = chat_service.chat_stream(
+            query=query,
+            session_id=session_id,
+            k=k,
+            model=model,
+            db=db,
+        )
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     return StreamingResponse(
         stream_result.stream,
@@ -756,14 +764,17 @@ async def chat_stream_get_endpoint(
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
-    chat_service = get_chat_service()
-    stream_result = chat_service.chat_stream(
-        query=request.query,
-        session_id=request.session_id,
-        k=request.k,
-        model=request.model,
-        db=db,
-    )
+    try:
+        chat_service = get_chat_service()
+        stream_result = chat_service.chat_stream(
+            query=request.query,
+            session_id=request.session_id,
+            k=request.k,
+            model=request.model,
+            db=db,
+        )
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     return StreamingResponse(
         stream_result.stream,
