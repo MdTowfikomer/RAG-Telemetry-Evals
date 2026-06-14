@@ -5,7 +5,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.dependencies import factory
-from backend.api.routes import chat_router, evaluations_router, scores_router, sessions_router
+from backend.api.routes import (
+    chat_router,
+    documents_router,
+    evaluations_router,
+    scores_router,
+    sessions_router,
+)
 
 
 def run_startup_migrations() -> None:
@@ -41,12 +47,13 @@ def create_app() -> FastAPI:
     application = FastAPI(title="Modular RAG API", lifespan=lifespan)
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=factory.settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     application.include_router(chat_router)
+    application.include_router(documents_router)
     application.include_router(sessions_router)
     application.include_router(evaluations_router)
     application.include_router(scores_router)

@@ -13,6 +13,12 @@ class ChatRequest(BaseModel):
     session_id: Optional[UUID] = None
     k: int = 3
     model: str = settings.openrouter_model
+    api_key: Optional[str] = None
+
+
+class DocumentResponse(BaseModel):
+    page_content: str
+    metadata: dict = {}
 
 
 class ChatResponse(BaseModel):
@@ -20,12 +26,12 @@ class ChatResponse(BaseModel):
     session_id: UUID
     query: str
     response: str
-    source_documents: List[str]
+    source_documents: List[DocumentResponse]
 
 
 class ContextResponse(BaseModel):
     query: str
-    source_documents: List[str]
+    source_documents: List[DocumentResponse]
 
 
 class SessionSummaryResponse(BaseModel):
@@ -66,6 +72,7 @@ class MessageEvaluationVersionResponse(BaseModel):
 class ReevaluateRequest(BaseModel):
     k: int = 3
     model: str = settings.openrouter_model
+    api_key: Optional[str] = None
 
 
 def build_message_evaluation_response(

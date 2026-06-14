@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PanelRightClose } from "lucide-react";
 import ContextCard from "./ContextCard";
 import type {
   ChatMessage,
@@ -10,6 +11,7 @@ interface RightPaneProps {
   contextDocs: ContextDoc[];
   selectedMessage: ChatMessage | null;
   evaluationHistory: MessageEvaluationVersion[];
+  onCollapse: () => void;
 }
 
 function formatScore(score: number | undefined): string {
@@ -24,11 +26,24 @@ function RightPane({
   contextDocs,
   selectedMessage,
   evaluationHistory,
+  onCollapse,
 }: RightPaneProps) {
   const [activeTab, setActiveTab] = useState<"context" | "metrics">("context");
 
   return (
-    <aside className="p-4">
+    <aside className="p-4 flex flex-col h-full bg-slate-950 text-slate-200 border-l border-slate-900 overflow-y-auto">
+      {/* Header Close Panel */}
+      <div className="mb-4 flex items-center justify-between border-b border-slate-900 pb-2 shrink-0">
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Inspector</h2>
+        <button
+          onClick={onCollapse}
+          className="p-1 text-slate-500 hover:text-slate-200 hover:bg-slate-900 rounded transition cursor-pointer"
+          title="Collapse Panel"
+        >
+          <PanelRightClose className="h-4 w-4" />
+        </button>
+      </div>
+
       <div className="mb-4 flex items-center gap-2">
         <button
           type="button"

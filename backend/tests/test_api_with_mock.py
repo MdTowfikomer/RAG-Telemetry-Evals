@@ -279,3 +279,50 @@ class TestAPIWithMockEvaluator(unittest.TestCase):
         )
         self.assertEqual(limited.status_code, 429)
         self.assertIn("Retry-After", limited.headers)
+
+    def test_delete_session_success(self):
+        with Session(self.engine) as session:
+            chat_session = ChatSession(title="Session to delete")
+            session.add(chat_session)
+            session.commit()
+            session.refresh(chat_session)
+
+            user_message = ChatMessage(
+                session_id=chat_session.id,
+                role="user",
+                content="Tell me about yourself.",
+            )
+            session.add(user_message)
+            session.commit()
+            session.refresh(user_message)
+
+            evaluation = Evaluation(
+                message_id=user_message.id,
+                version=1,
+                status="completed",
+                faithfulness=0.9,
+                answer_relevancy=0.8,
+            )
+            session.add(evaluation)
+            session.commit()
+
+            session_id = chat_session.id
+            message_id = user_message.id
+            evaluation_id = evaluation.id
+
+        # Delete session
+        response = self.client.delete(f"/sessions/{session_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Verify all records are deleted
+        with Session(self.engine) as session:
+            self.assertIsNone(session.get(ChatSession, session_id))
+            self.assertIsNone(session.get(ChatMessage, message_id))
+            self.assertIsNone(session.get(Evaluation, evaluation_id))
+
+    def test_delete_session_not_found(self):
+        import uuid
+        response = self.client.delete(f"/sessions/{uuid.uuid4()}")
+        self.assertEqual(response.status_code, 404)
+

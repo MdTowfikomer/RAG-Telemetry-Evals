@@ -6,6 +6,7 @@ from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
 )
+from langchain_core.documents import Document as LCDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import SecretStr
 from qdrant_client.http import models
@@ -37,24 +38,57 @@ def ingest(factory: InfrastructureFactory):
         print("No documents found. Exiting.")
         return
 
-    # Split
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    splits = text_splitter.split_documents(docs)
-    print(f"Created {len(splits)} chunks.")
+    # Split using Parent-Child chunking strategy
+    parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+    child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+
+    splits = []
+    parent_id_counter = 0
+    for doc in docs:
+        parent_docs = parent_splitter.split_documents([doc])
+        for parent_doc in parent_docs:
+            parent_id = f"{parent_doc.metadata.get('source', 'unknown')}_p{parent_id_counter}"
+            parent_id_counter += 1
+
+            # Split parent chunk into child chunks
+            child_docs = child_splitter.split_documents([parent_doc])
+            for child_doc in child_docs:
+                child_metadata = dict(child_doc.metadata)
+                child_metadata["parent_id"] = parent_id
+                child_metadata["parent_content"] = parent_doc.page_content
+
+                splits.append(
+                    LCDocument(
+                        page_content=child_doc.page_content,
+                        metadata=child_metadata,
+                    )
+                )
+
+    print(f"Created {len(splits)} child chunks associated with parents.")
 
     # Infra dependencies
     _ = factory.get_embeddings()
     client = factory.get_qdrant_client()
 
-    # Ensure collection exists
-    if not client.collection_exists(factory.settings.collection_name):
-        print(f"Creating collection: {factory.settings.collection_name}")
-        client.create_collection(
-            collection_name=factory.settings.collection_name,
-            vectors_config=models.VectorParams(
-                size=384, distance=models.Distance.COSINE
-            ),
-        )
+    # Recreate collection to ensure sparse vector configuration is active
+    if client.collection_exists(factory.settings.collection_name):
+        print(f"Deleting existing collection: {factory.settings.collection_name}")
+        client.delete_collection(factory.settings.collection_name)
+
+    print(f"Creating collection: {factory.settings.collection_name}")
+    client.create_collection(
+        collection_name=factory.settings.collection_name,
+        vectors_config=models.VectorParams(
+            size=384, distance=models.Distance.COSINE
+        ),
+        sparse_vectors_config={
+            "fastembed-sparse": models.SparseVectorParams(
+                index=models.SparseIndexParams(
+                    on_disk=True
+                )
+            )
+        }
+    )
 
     qdrant = factory.get_vectorstore()
 

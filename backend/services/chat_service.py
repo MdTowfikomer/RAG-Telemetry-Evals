@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session as SQLAlchemySession
 from sqlmodel import Session as SQLModelSession
 
-from backend.core import ChatMessage, ChatSession
+from backend.core import ChatMessage, ChatSession, Document
 from backend.core.exceptions import SessionNotFoundError
 
 
@@ -19,7 +19,7 @@ class ChatResult:
     session_id: UUID
     query: str
     response: str
-    source_documents: list[str]
+    source_documents: list[Document]
 
 
 @dataclass
@@ -109,7 +109,7 @@ class ChatService:
                 session_id=session.id,
                 query=query,
                 response=answer,
-                source_documents=contexts,
+                source_documents=docs,
             )
 
     def chat_stream(

@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, Sequence, cast
+from typing import Any, Dict, Sequence, Union, Callable, cast
 
 from datasets import Dataset
 from openai import OpenAI
@@ -17,7 +17,7 @@ from .interfaces import EvalContext, Evaluator
 class RagasEvaluator(Evaluator):
     def __init__(
         self,
-        api_key: str,
+        api_key: Union[str, Callable[[], Any]],
         base_url: str = "https://openrouter.ai/api/v1",
         eval_model: str = "google/gemini-2.0-flash-001",
         embeddings: Any = None,
@@ -44,8 +44,12 @@ class RagasEvaluator(Evaluator):
                 )
 
                 # Setup Ragas LLM
+                api_key_value = self.api_key() if callable(self.api_key) else self.api_key
+                if hasattr(api_key_value, "get_secret_value"):
+                    api_key_value = api_key_value.get_secret_value()
+
                 judge_client = OpenAI(
-                    api_key=self.api_key,
+                    api_key=api_key_value,
                     base_url=self.base_url,
                 )
                 ragas_llm = llm_factory(

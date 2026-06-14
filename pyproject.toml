@@ -7,6 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "arize-phoenix>=15.0.0",
     "datasets>=4.8.5",
+    "fastembed>=0.8.0",
+    "flashrank>=0.2.10",
     "langchain>=1.2.16",
     "langchain-community>=0.4.1",
     "langchain-huggingface>=1.2.2",

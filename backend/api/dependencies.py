@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 from collections import defaultdict, deque
 from math import ceil
 from time import monotonic
@@ -6,7 +7,7 @@ from time import monotonic
 from opentelemetry import trace as otel_trace
 from pydantic import SecretStr
 
-from backend.adapters import OpenRouterGenerator, PassThroughReranker, QdrantRetriever
+from backend.adapters import FlashRankReranker, OpenRouterGenerator, QdrantRetriever
 from backend.core import InfrastructureFactory, RAGPipeline, Settings, TracingHook
 from backend.core.evaluation_store import (
     create_pending_evaluation,
@@ -26,16 +27,22 @@ if settings.openrouter_api_key is None:
     raise RuntimeError("OPENROUTER_API_KEY is required")
 
 openrouter_api_key = settings.openrouter_api_key
+openrouter_api_key_var: contextvars.ContextVar[SecretStr | None] = contextvars.ContextVar(
+    "openrouter_api_key_var", default=None
+)
 tracer = otel_trace.get_tracer(__name__)
 embeddings = factory.get_embeddings()
 vectorstore = factory.get_vectorstore()
 
 retriever_adapter = QdrantRetriever(vectorstore=vectorstore)
-reranker_adapter = PassThroughReranker()
+reranker_adapter = FlashRankReranker()
 pipeline_cache: dict[str, RAGPipeline] = {}
 
 
 def get_openrouter_api_key() -> SecretStr:
+    custom_key = openrouter_api_key_var.get()
+    if custom_key is not None:
+        return custom_key
     return openrouter_api_key
 
 
@@ -60,7 +67,7 @@ def get_pipeline_for_model(model: str | None) -> RAGPipeline:
 
 
 evaluator = RagasEvaluator(
-    api_key=openrouter_api_key.get_secret_value(),
+    api_key=get_openrouter_api_key,
     eval_model=settings.ragas_eval_model,
     embeddings=embeddings,
 )

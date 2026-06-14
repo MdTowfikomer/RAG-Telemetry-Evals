@@ -28,6 +28,7 @@ export interface ContextDoc {
   id: string;
   title: string;
   content: string;
+  metadata?: Record<string, any>;
 }
 
 export interface HistoryItem {
@@ -63,4 +64,18 @@ export interface ChatSettings {
   topK: number;
   model: string;
   includeChunks: boolean;
+  apiKey?: string;
+  temperature?: number;
+  systemPrompt?: string;
 }
+
+export interface UploadedFile {
+  id: string;
+  filename: string;
+  file_size: number;
+  status: "pending" | "processing" | "indexed" | "failed";
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+

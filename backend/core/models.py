@@ -49,3 +49,14 @@ class Evaluation(SQLModel, table=True):
     updated_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
     message: Optional[ChatMessage] = Relationship(back_populates="evaluations")
+
+
+class UploadedFile(SQLModel, table=True):
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    filename: str
+    file_size: int
+    status: str  # pending | processing | indexed | failed
+    error_message: Optional[str] = None
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
+

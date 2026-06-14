@@ -20,3 +20,5 @@ pydantic-settings
 ragas
 datasets
 sqlmodel
+fastembed
+flashrank

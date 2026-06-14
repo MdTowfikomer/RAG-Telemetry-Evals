@@ -72,8 +72,12 @@ class TestInfrastructureFactory(unittest.TestCase):
         second = factory.get_qdrant_client()
 
         self.assertIs(first, second)
-        mock_qdrant_client_cls.assert_called_once_with(url=self.settings.qdrant_url)
+        mock_qdrant_client_cls.assert_called_once_with(
+            url=self.settings.qdrant_url,
+            api_key=None,
+        )
 
+    @patch("backend.core.infrastructure.FastEmbedSparse")
     @patch("backend.core.infrastructure.QdrantVectorStore")
     @patch("backend.core.infrastructure.QdrantClient")
     @patch("backend.core.infrastructure.LCHuggingFaceEmbeddings")
@@ -82,6 +86,7 @@ class TestInfrastructureFactory(unittest.TestCase):
         mock_embeddings_cls,
         mock_qdrant_client_cls,
         mock_vectorstore_cls,
+        mock_sparse_embeddings_cls,
     ):
         factory = InfrastructureFactory(self.settings)
 
@@ -92,11 +97,32 @@ class TestInfrastructureFactory(unittest.TestCase):
         mock_embeddings_cls.assert_called_once_with(
             model_name=self.settings.embedding_model
         )
-        mock_qdrant_client_cls.assert_called_once_with(url=self.settings.qdrant_url)
+        mock_qdrant_client_cls.assert_called_once_with(
+            url=self.settings.qdrant_url,
+            api_key=None,
+        )
+        mock_sparse_embeddings_cls.assert_called_once_with(
+            model_name="Qdrant/bm42-all-minilm-l6-v2-attentions"
+        )
         mock_vectorstore_cls.assert_called_once_with(
             client=mock_qdrant_client_cls.return_value,
             collection_name=self.settings.collection_name,
             embedding=mock_embeddings_cls.return_value,
+            sparse_embedding=mock_sparse_embeddings_cls.return_value,
+            sparse_vector_name="fastembed-sparse",
+            retrieval_mode=unittest.mock.ANY,
+        )
+
+    @patch("backend.core.infrastructure.FastEmbedSparse")
+    def test_get_sparse_embeddings_is_cached(self, mock_sparse_embeddings_cls):
+        factory = InfrastructureFactory(self.settings)
+
+        first = factory.get_sparse_embeddings()
+        second = factory.get_sparse_embeddings()
+
+        self.assertIs(first, second)
+        mock_sparse_embeddings_cls.assert_called_once_with(
+            model_name="Qdrant/bm42-all-minilm-l6-v2-attentions"
         )
 
     @patch("backend.core.infrastructure.ChatOpenAI")

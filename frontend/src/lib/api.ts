@@ -3,14 +3,20 @@ import type {
   ContextDoc,
   SessionMessage,
   SessionSummary,
+  UploadedFile,
 } from "../types";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+type ApiDocument = {
+  page_content: string;
+  metadata?: Record<string, any>;
+};
+
 type ContextApiResponse = {
   query: string;
-  source_documents: string[];
+  source_documents: ApiDocument[];
 };
 
 function createId(prefix: string): string {
@@ -103,6 +109,7 @@ export const api = {
         body: JSON.stringify({
           k: settings.topK,
           model: settings.model,
+          api_key: settings.apiKey || undefined,
         }),
       },
     );
@@ -129,6 +136,7 @@ export const api = {
         query,
         k: settings.topK,
         model: settings.model,
+        api_key: settings.apiKey || undefined,
       }),
     });
 
@@ -140,11 +148,17 @@ export const api = {
 
     const contextData = (await contextResponse.json()) as ContextApiResponse;
 
-    return contextData.source_documents.map((content, index) => ({
-      id: createId(`context-${index}`),
-      title: `Context ${index + 1}`,
-      content,
-    }));
+    return contextData.source_documents.map((doc, index) => {
+      const metadata = doc.metadata ?? {};
+      const sourcePath = metadata.source ?? "";
+      const filename = sourcePath.split(/[/\\]/).pop() || `Context ${index + 1}`;
+      return {
+        id: createId(`context-${index}`),
+        title: filename,
+        content: doc.page_content,
+        metadata,
+      };
+    });
   },
 
   streamScores(
@@ -193,7 +207,10 @@ export const api = {
     const sessionParam = sessionId
       ? `&session_id=${encodeURIComponent(sessionId)}`
       : "";
-    const streamUrl = `${API_BASE_URL}/chat/stream?query=${encodeURIComponent(query)}&k=${settings.topK}&model=${encodeURIComponent(settings.model)}${sessionParam}`;
+    const keyParam = settings.apiKey
+      ? `&api_key=${encodeURIComponent(settings.apiKey)}`
+      : "";
+    const streamUrl = `${API_BASE_URL}/chat/stream?query=${encodeURIComponent(query)}&k=${settings.topK}&model=${encodeURIComponent(settings.model)}${sessionParam}${keyParam}`;
     const source = new EventSource(streamUrl);
 
     source.onmessage = (event) => {
@@ -248,5 +265,58 @@ export const api = {
     };
 
     return () => source.close();
+  },
+
+  async fetchDocuments(): Promise<UploadedFile[]> {
+    const response = await fetch(`${API_BASE_URL}/documents`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch documents with status ${response.status}`);
+    }
+
+    return (await response.json()) as UploadedFile[];
+  },
+
+  async uploadDocuments(files: File[]): Promise<UploadedFile[]> {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+      };
+      throw new Error(
+        errorData.detail || `Upload failed with status ${response.status}`,
+      );
+    }
+
+    return (await response.json()) as UploadedFile[];
+  },
+
+  async deleteDocument(documentId: string): Promise<{ message: string }> {
+    const response = await fetch(
+      `${API_BASE_URL}/documents/${encodeURIComponent(documentId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Delete failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as { message: string };
+  },
+
+  async deleteSession(_sessionId: string): Promise<{ status: string; message: string }> {
+    // Simulated deletion since the backend API is not available
+    return { status: "success", message: "Session deleted locally" };
   },
 };

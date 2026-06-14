@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from opentelemetry import context as otel_context
+from pydantic import SecretStr
 from sqlmodel import Session
 
 from backend.api.dependencies import (
@@ -11,8 +12,9 @@ from backend.api.dependencies import (
     get_db,
     get_pipeline_for_model,
     settings,
+    openrouter_api_key_var,
 )
-from backend.api.schemas import ChatRequest, ChatResponse, ContextResponse
+from backend.api.schemas import ChatRequest, ChatResponse, ContextResponse, DocumentResponse
 from backend.core import SessionNotFoundError
 from backend.services.chat_service import ChatService
 
@@ -37,6 +39,8 @@ async def chat_endpoint(
     db: Session = Depends(get_db),
     chat_service: ChatService = Depends(get_chat_service),
 ):
+    if request.api_key:
+        openrouter_api_key_var.set(SecretStr(request.api_key))
     try:
         current_context = otel_context.get_current()
         result = await chat_service.chat(
@@ -53,7 +57,10 @@ async def chat_endpoint(
             session_id=result.session_id,
             query=result.query,
             response=result.response,
-            source_documents=result.source_documents,
+            source_documents=[
+                DocumentResponse(page_content=doc.page_content, metadata=doc.metadata)
+                for doc in result.source_documents
+            ],
         )
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -66,11 +73,16 @@ async def chat_endpoint(
 
 @router.post("/context", response_model=ContextResponse)
 async def context_endpoint(request: ChatRequest):
+    if request.api_key:
+        openrouter_api_key_var.set(SecretStr(request.api_key))
     pipeline = get_pipeline_for_model(request.model)
     docs = await pipeline.prepare_context(request.query, k=request.k)
     return ContextResponse(
         query=request.query,
-        source_documents=[doc.page_content for doc in docs],
+        source_documents=[
+            DocumentResponse(page_content=doc.page_content, metadata=doc.metadata)
+            for doc in docs
+        ],
     )
 
 
@@ -80,9 +92,12 @@ async def chat_stream_get_endpoint(
     k: int = 3,
     model: str = settings.openrouter_model,
     session_id: Optional[UUID] = None,
+    api_key: Optional[str] = None,
     db: Session = Depends(get_db),
     chat_service: ChatService = Depends(get_chat_service),
 ):
+    if api_key:
+        openrouter_api_key_var.set(SecretStr(api_key))
     try:
         stream_result = chat_service.chat_stream(
             query=query,
@@ -103,6 +118,8 @@ async def chat_stream_endpoint(
     db: Session = Depends(get_db),
     chat_service: ChatService = Depends(get_chat_service),
 ):
+    if request.api_key:
+        openrouter_api_key_var.set(SecretStr(request.api_key))
     try:
         stream_result = chat_service.chat_stream(
             query=request.query,

@@ -1,3 +1,3 @@
-from .passthrough_reranker import PassThroughReranker
+from .flashrank_reranker import FlashRankReranker
 
-__all__ = ["PassThroughReranker"]
+__all__ = ["FlashRankReranker"]

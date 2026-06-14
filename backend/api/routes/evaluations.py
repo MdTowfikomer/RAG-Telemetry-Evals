@@ -3,6 +3,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import SecretStr
 from sqlalchemy import desc
 from sqlmodel import Session, col, select
 
@@ -10,6 +11,7 @@ from backend.api.dependencies import (
     get_db,
     get_evaluation_service,
     reevaluate_rate_limiter,
+    openrouter_api_key_var,
 )
 from backend.api.schemas import (
     MessageEvaluationVersionResponse,
@@ -53,6 +55,8 @@ async def reevaluate_assistant_message(
     db: Session = Depends(get_db),
     evaluation_service: EvaluationService = Depends(get_evaluation_service),
 ):
+    if reevaluate_request.api_key:
+        openrouter_api_key_var.set(SecretStr(reevaluate_request.api_key))
     client_host = (
         "unknown"
         if http_request.client is None or http_request.client.host is None

@@ -76,7 +76,7 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.query, "test query")
         self.assertEqual(result.response, "Test response")
         self.assertEqual(len(result.source_documents), 1)
-        self.assertEqual(result.source_documents[0], "context")
+        self.assertEqual(result.source_documents[0].page_content, "context")
 
         db.close()
 

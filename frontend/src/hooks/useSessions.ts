@@ -105,6 +105,23 @@ export function useSessions({
     setMessages(initialMessages);
   }, [initialMessages, setMessages]);
 
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await api.deleteSession(sessionId);
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (sessionIdRef.current === sessionId) {
+          resetToInitialMessages();
+          resetSessionState();
+        }
+      } catch (error) {
+        console.error("Failed to delete session:", error);
+        setErrorMessage("Failed to delete session.");
+      }
+    },
+    [resetSessionState, resetToInitialMessages, setErrorMessage]
+  );
+
   return {
     sessions,
     activeSessionId,
@@ -114,5 +131,6 @@ export function useSessions({
     loadSession,
     resetSessionState,
     resetToInitialMessages,
+    deleteSession,
   };
 }

@@ -83,6 +83,7 @@ export function useChat(settings: ChatSettings) {
     sendMessage: stream.sendMessage,
     clearChat,
     loadSession,
+    deleteSession: sessions.deleteSession,
     refreshSessions: sessions.refreshSessions,
     selectAssistantMessage: evaluations.selectAssistantMessage,
     reevaluateAssistantMessage: evaluations.reevaluateAssistantMessage,

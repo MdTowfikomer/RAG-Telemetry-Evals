@@ -138,7 +138,10 @@ describe("api adapter", () => {
       ok: true,
       json: async () => ({
         query: "q",
-        source_documents: ["Doc A", "Doc B"],
+        source_documents: [
+          { page_content: "Doc A", metadata: { source: "data/Doc_A.txt" } },
+          { page_content: "Doc B", metadata: { source: "data/Doc_B.txt" } },
+        ],
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -147,9 +150,9 @@ describe("api adapter", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(docs).toHaveLength(2);
-    expect(docs[0].title).toBe("Context 1");
+    expect(docs[0].title).toBe("Doc_A.txt");
     expect(docs[0].content).toBe("Doc A");
-    expect(docs[1].title).toBe("Context 2");
+    expect(docs[1].title).toBe("Doc_B.txt");
   });
 
   it("fetchContext throws on non-ok response", async () => {

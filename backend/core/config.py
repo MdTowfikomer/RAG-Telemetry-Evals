@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: SecretStr | None = None
     collection_name: str = "rag_collection"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     phoenix_url: str = "http://localhost:6006/v1/traces"
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "google/gemini-2.0-flash-001"
     ragas_eval_model: str = "google/gemini-2.0-flash-001"
     database_url: str = "sqlite:///./rag_workbench.db"
+    cors_origins: list[str] = ["*"]
 
     model_config = SettingsConfigDict(
         env_file=".env",

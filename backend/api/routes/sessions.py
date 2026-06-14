@@ -74,3 +74,23 @@ async def get_session_messages(session_id: UUID, db: Session = Depends(get_db)):
         )
 
     return response_messages
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: UUID, db: Session = Depends(get_db)):
+    session = db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Delete related Evaluations and ChatMessages
+    messages = db.exec(select(ChatMessage).where(ChatMessage.session_id == session_id)).all()
+    for msg in messages:
+        evaluations = db.exec(select(Evaluation).where(Evaluation.message_id == msg.id)).all()
+        for eval_item in evaluations:
+            db.delete(eval_item)
+        db.delete(msg)
+
+    db.delete(session)
+    db.commit()
+    return {"status": "success", "message": "Session and history deleted successfully"}
+

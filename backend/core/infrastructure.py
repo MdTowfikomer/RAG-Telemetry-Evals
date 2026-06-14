@@ -1,6 +1,6 @@
 from langchain_huggingface import HuggingFaceEmbeddings as LCHuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain_qdrant import QdrantVectorStore
+from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry import trace as otel_trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -11,13 +11,14 @@ from qdrant_client import QdrantClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import Settings
-from .models import ChatMessage, ChatSession, Evaluation  # Ensure models are registered
+from .models import ChatMessage, ChatSession, Evaluation, UploadedFile  # Ensure models are registered
 
 
 class InfrastructureFactory:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._embeddings = None
+        self._sparse_embeddings = None
         self._qdrant_client = None
         self._vectorstore = None
         self._engine = None
@@ -42,9 +43,24 @@ class InfrastructureFactory:
             )
         return self._embeddings
 
+    def get_sparse_embeddings(self):
+        if self._sparse_embeddings is None:
+            self._sparse_embeddings = FastEmbedSparse(
+                model_name="Qdrant/bm42-all-minilm-l6-v2-attentions"
+            )
+        return self._sparse_embeddings
+
     def get_qdrant_client(self):
         if self._qdrant_client is None:
-            self._qdrant_client = QdrantClient(url=self.settings.qdrant_url)
+            api_key = (
+                self.settings.qdrant_api_key.get_secret_value()
+                if self.settings.qdrant_api_key
+                else None
+            )
+            self._qdrant_client = QdrantClient(
+                url=self.settings.qdrant_url,
+                api_key=api_key,
+            )
         return self._qdrant_client
 
     def get_vectorstore(self):
@@ -53,6 +69,9 @@ class InfrastructureFactory:
                 client=self.get_qdrant_client(),
                 collection_name=self.settings.collection_name,
                 embedding=self.get_embeddings(),
+                sparse_embedding=self.get_sparse_embeddings(),
+                sparse_vector_name="fastembed-sparse",
+                retrieval_mode=RetrievalMode.HYBRID,
             )
         return self._vectorstore
 
