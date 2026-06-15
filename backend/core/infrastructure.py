@@ -85,9 +85,19 @@ class InfrastructureFactory:
 
     def get_engine(self):
         if self._engine is None:
-            connect_args = {"check_same_thread": False}
+            is_sqlite = self.settings.database_url.startswith("sqlite")
+            connect_args = {"check_same_thread": False} if is_sqlite else {}
+            pool_kwargs = {}
+            if not is_sqlite:
+                pool_kwargs = {
+                    "pool_recycle": 300,
+                    "pool_pre_ping": True,
+                }
             self._engine = create_engine(
-                self.settings.database_url, echo=False, connect_args=connect_args
+                self.settings.database_url,
+                echo=False,
+                connect_args=connect_args,
+                **pool_kwargs
             )
         return self._engine
 

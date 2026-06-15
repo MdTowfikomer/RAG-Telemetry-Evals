@@ -14,32 +14,10 @@ from backend.api.routes import (
 )
 
 
-def run_startup_migrations() -> None:
-    engine = factory.get_engine()
-    if engine.dialect.name != "sqlite":
-        return
-
-    with engine.connect() as connection:
-        chatmessage_columns = {
-            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(chatmessage)")
-        }
-        if "latency_ms" not in chatmessage_columns:
-            connection.exec_driver_sql("ALTER TABLE chatmessage ADD COLUMN latency_ms INTEGER")
-        if "token_count" not in chatmessage_columns:
-            connection.exec_driver_sql("ALTER TABLE chatmessage ADD COLUMN token_count INTEGER")
-
-        evaluation_columns = {
-            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(evaluation)")
-        }
-        if "reasoning" not in evaluation_columns:
-            connection.exec_driver_sql("ALTER TABLE evaluation ADD COLUMN reasoning VARCHAR")
-        connection.commit()
-
-
+# what does lifespan do?
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     factory.init_db()
-    run_startup_migrations()
     yield
 
 
