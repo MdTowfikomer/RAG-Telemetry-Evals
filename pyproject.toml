@@ -10,7 +10,7 @@ dependencies = [
     "fastembed>=0.8.0",
     "flashrank>=0.2.10",
     "langchain>=1.2.16",
-    "langchain-community>=0.4.1",
+    "langchain-community==0.4.1",
     "langchain-huggingface>=1.2.2",
     "langchain-openai>=1.2.1",
     "langchain-qdrant>=1.1.0",
