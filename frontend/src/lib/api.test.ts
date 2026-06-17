@@ -279,4 +279,21 @@ describe("api adapter", () => {
 
     source2Cleanup();
   });
+
+  it("deleteSession makes DELETE request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "success", message: "deleted" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.deleteSession("session-123");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/sessions/session-123");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "DELETE",
+    });
+    expect(result.status).toBe("success");
+  });
 });

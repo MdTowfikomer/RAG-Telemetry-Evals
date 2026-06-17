@@ -32,7 +32,7 @@ async def list_sessions(db: Session = Depends(get_db)):
 async def get_session_messages(session_id: UUID, db: Session = Depends(get_db)):
     session = db.get(ChatSession, session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        return []
 
     messages = db.exec(
         select(ChatMessage)

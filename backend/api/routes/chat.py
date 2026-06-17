@@ -75,15 +75,21 @@ async def chat_endpoint(
 async def context_endpoint(request: ChatRequest):
     if request.api_key:
         openrouter_api_key_var.set(SecretStr(request.api_key))
-    pipeline = get_pipeline_for_model(request.model)
-    docs = await pipeline.prepare_context(request.query, k=request.k)
-    return ContextResponse(
-        query=request.query,
-        source_documents=[
-            DocumentResponse(page_content=doc.page_content, metadata=doc.metadata)
-            for doc in docs
-        ],
-    )
+    try:
+        pipeline = get_pipeline_for_model(request.model)
+        docs = await pipeline.prepare_context(request.query, k=request.k)
+        return ContextResponse(
+            query=request.query,
+            source_documents=[
+                DocumentResponse(page_content=doc.page_content, metadata=doc.metadata)
+                for doc in docs
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"Error in context endpoint: {error}")
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 @router.get("/chat/stream")

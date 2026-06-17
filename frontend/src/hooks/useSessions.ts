@@ -97,8 +97,11 @@ export function useSessions({
   );
 
   const resetSessionState = useCallback(() => {
-    sessionIdRef.current = null;
-    setActiveSessionId(null);
+    const newId = typeof crypto !== "undefined" && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    sessionIdRef.current = newId;
+    setActiveSessionId(newId);
   }, []);
 
   const resetToInitialMessages = useCallback(() => {

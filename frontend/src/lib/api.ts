@@ -315,8 +315,18 @@ export const api = {
     return (await response.json()) as { message: string };
   },
 
-  async deleteSession(_sessionId: string): Promise<{ status: string; message: string }> {
-    // Simulated deletion since the backend API is not available
-    return { status: "success", message: "Session deleted locally" };
+  async deleteSession(sessionId: string): Promise<{ status: string; message: string }> {
+    const response = await fetch(
+      `${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Delete session failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as { status: string; message: string };
   },
 };

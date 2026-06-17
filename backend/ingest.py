@@ -19,6 +19,7 @@ DATA_PATH = PROJECT_ROOT / "data"
 
 def ingest(factory: InfrastructureFactory):
     print(f"Loading documents from {DATA_PATH}...")
+    DATA_PATH.mkdir(parents=True, exist_ok=True)
 
     # Loaders for different file types
     text_loader = DirectoryLoader(

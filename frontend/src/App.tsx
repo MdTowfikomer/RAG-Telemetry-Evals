@@ -131,9 +131,7 @@ function App() {
         void loadSession(sessionIdFromUrl);
       }
     } else if (currentPath === "/" || currentPath === "") {
-      if (activeSessionId !== null) {
-        clearChat();
-      }
+      clearChat();
     }
   }, [currentPath, loadSession, clearChat, activeSessionId]);
 

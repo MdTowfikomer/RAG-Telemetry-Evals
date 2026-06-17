@@ -143,20 +143,28 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[0].session_id, existing_session.id)
             self.assertEqual(messages[1].session_id, existing_session.id)
 
-    async def test_chat_raises_session_not_found_error(self):
+    async def test_chat_creates_session_if_provided_id_not_found(self):
         db_gen = self.get_db()
         db = next(db_gen)
 
-        with self.assertRaises(SessionNotFoundError):
-            await self.chat_service.chat(
-                query="non-existent session",
-                session_id=UUID("00000000-0000-0000-0000-000000000002"),
-                k=3,
-                model="test-model",
-                db=db,
-                task_spawner=MagicMock(),
-                parent_context=None,
-            )
+        non_existent_id = UUID("00000000-0000-0000-0000-000000000002")
+        mock_pipeline = AsyncMock()
+        mock_pipeline.execute.return_value = ("answer", [])
+        self.mock_pipeline_factory.return_value = mock_pipeline
+
+        await self.chat_service.chat(
+            query="non-existent session",
+            session_id=non_existent_id,
+            k=3,
+            model="test-model",
+            db=db,
+            task_spawner=MagicMock(),
+            parent_context=None,
+        )
+
+        session = db.get(ChatSession, non_existent_id)
+        self.assertIsNotNone(session)
+        self.assertEqual(session.title, "non-existent session...")
 
     async def test_chat_stream_creates_new_session_and_messages(self):
         async def mock_stream(_query, k=3):
@@ -242,15 +250,28 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[1].session_id, existing_session.id)
             self.assertEqual(messages[1].content, "chunk1chunk2")
 
-    async def test_chat_stream_raises_session_not_found_error(self):
+    async def test_chat_stream_creates_session_if_provided_id_not_found(self):
         db_gen = self.get_db()
         db = next(db_gen)
 
-        with self.assertRaises(SessionNotFoundError):
-            self.chat_service.chat_stream(
-                query="non-existent stream session",
-                session_id=UUID("00000000-0000-0000-0000-000000000003"),
-                k=3,
-                model="test-model",
-                db=db,
-            )
+        non_existent_id = UUID("00000000-0000-0000-0000-000000000003")
+        mock_pipeline = AsyncMock()
+        async def mock_stream(_query, k=3):
+            yield "chunk1"
+        mock_pipeline.stream = mock_stream
+        self.mock_pipeline_factory.return_value = mock_pipeline
+
+        result = self.chat_service.chat_stream(
+            query="non-existent stream session",
+            session_id=non_existent_id,
+            k=3,
+            model="test-model",
+            db=db,
+        )
+
+        async for _ in result.stream:
+            pass
+
+        session = db.get(ChatSession, non_existent_id)
+        self.assertIsNotNone(session)
+        self.assertEqual(session.title, "non-existent stream session...")

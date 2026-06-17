@@ -60,7 +60,10 @@ class ChatService:
             if session_id:
                 session = db.get(ChatSession, session_id)
                 if not session:
-                    raise SessionNotFoundError("Session not found")
+                    session = ChatSession(id=session_id, title=query[:50] + "...")
+                    db.add(session)
+                    db.commit()
+                    db.refresh(session)
             else:
                 session = ChatSession(title=query[:50] + "...")
                 db.add(session)
@@ -127,7 +130,10 @@ class ChatService:
             if session_id:
                 session = db.get(ChatSession, session_id)
                 if not session:
-                    raise SessionNotFoundError("Session not found")
+                    session = ChatSession(id=session_id, title=query[:50] + "...")
+                    db.add(session)
+                    db.commit()
+                    db.refresh(session)
             else:
                 session = ChatSession(title=query[:50] + "...")
                 db.add(session)
