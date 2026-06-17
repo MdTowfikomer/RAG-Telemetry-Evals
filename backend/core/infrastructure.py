@@ -44,7 +44,7 @@ class InfrastructureFactory:
             if api_key is None:
                 api_key = SecretStr("dummy_jina_key_to_pass_validation")
             self._embeddings = JinaEmbeddings(
-                jina_api_key=api_key,
+                jina_api_key=api_key.get_secret_value(),
                 model_name=self.settings.embedding_model,
                 session=requests.Session(),
             )
