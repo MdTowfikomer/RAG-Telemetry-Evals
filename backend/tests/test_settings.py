@@ -38,6 +38,25 @@ class TestSettings(unittest.TestCase):
 
         self.assertEqual(key.get_secret_value(), "test-key")
 
+    def test_default_cors_origins(self):
+        settings = NoEnvFileSettings(openrouter_api_key=SecretStr("test-key"))
+        self.assertIn("https://rag-telemetry-evals.onrender.com", settings.cors_origins)
+        self.assertIn("http://localhost:5173", settings.cors_origins)
+
+    def test_cors_origins_parsed_from_json(self):
+        settings = NoEnvFileSettings(
+            openrouter_api_key=SecretStr("test-key"),
+            cors_origins='["https://example.com", "http://another.com"]'
+        )
+        self.assertEqual(settings.cors_origins, ["https://example.com", "http://another.com"])
+
+    def test_cors_origins_parsed_from_comma_separated_string(self):
+        settings = NoEnvFileSettings(
+            openrouter_api_key=SecretStr("test-key"),
+            cors_origins="https://example.com, http://another.com,https://third.com"
+        )
+        self.assertEqual(settings.cors_origins, ["https://example.com", "http://another.com", "https://third.com"])
+
 
 if __name__ == "__main__":
     unittest.main()

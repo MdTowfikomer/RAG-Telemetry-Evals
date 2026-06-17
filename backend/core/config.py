@@ -1,4 +1,5 @@
-from pydantic import SecretStr, model_validator
+from typing import Any
+from pydantic import SecretStr, model_validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,12 +14,32 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/free"
     ragas_eval_model: str = "openrouter/free"
     database_url: str | None = None
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://rag-telemetry-evals.onrender.com",
+    ]
 
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
     )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            # Try to parse as JSON list
+            try:
+                import json
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed]
+            except json.JSONDecodeError:
+                pass
+            # Split comma-separated string
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     @model_validator(mode="after")
     def validate_openrouter_api_key(self):
