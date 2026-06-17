@@ -70,54 +70,60 @@ async def upload_documents(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
-    DATA_PATH.mkdir(parents=True, exist_ok=True)
+    try:
+        DATA_PATH.mkdir(parents=True, exist_ok=True)
 
-    db_files = []
-    file_ids = []
+        db_files = []
+        file_ids = []
 
-    for file in files:
-        if not file.filename:
-            continue
+        for file in files:
+            if not file.filename:
+                continue
 
-        ext = Path(file.filename).suffix.lower()
-        if ext not in [".pdf", ".txt", ".md"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file extension {ext}. Only .pdf, .txt, and .md are supported.",
+            ext = Path(file.filename).suffix.lower()
+            if ext not in [".pdf", ".txt", ".md"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file extension {ext}. Only .pdf, .txt, and .md are supported.",
+                )
+
+            fid = uuid4()
+            safe_filename = f"{fid}_{file.filename}"
+            dest_path = DATA_PATH / safe_filename
+
+            try:
+                content = await file.read()
+                file_size = len(content)
+                with open(dest_path, "wb") as buffer:
+                    buffer.write(content)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to save file {file.filename}: {str(e)}",
+                )
+
+            db_file = UploadedFile(
+                id=fid,
+                filename=file.filename,
+                file_size=file_size,
+                status="pending",
             )
+            db.add(db_file)
+            db_files.append(db_file)
+            file_ids.append(fid)
 
-        fid = uuid4()
-        safe_filename = f"{fid}_{file.filename}"
-        dest_path = DATA_PATH / safe_filename
+        db.commit()
+        for db_file in db_files:
+            db.refresh(db_file)
 
-        try:
-            content = await file.read()
-            file_size = len(content)
-            with open(dest_path, "wb") as buffer:
-                buffer.write(content)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to save file {file.filename}: {str(e)}",
-            )
+        background_tasks.add_task(run_ingestion, file_ids)
 
-        db_file = UploadedFile(
-            id=fid,
-            filename=file.filename,
-            file_size=file_size,
-            status="pending",
-        )
-        db.add(db_file)
-        db_files.append(db_file)
-        file_ids.append(fid)
-
-    db.commit()
-    for db_file in db_files:
-        db.refresh(db_file)
-
-    background_tasks.add_task(run_ingestion, file_ids)
-
-    return db_files
+        return db_files
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"Error in upload endpoint: {error}")
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 @router.delete("/{document_id}")

@@ -9,11 +9,15 @@ class QdrantRetriever(Retriever):
 
     async def retrieve(self, query: str, k: int) -> list[Document]:
         # Retrieve more documents to account for parent deduplication
-        raw_docs = await asyncio.to_thread(
-            self.vectorstore.similarity_search,
-            query,
-            k * 3,
-        )
+        try:
+            raw_docs = await asyncio.to_thread(
+                self.vectorstore.similarity_search,
+                query,
+                k * 3,
+            )
+        except Exception as e:
+            print(f"Qdrant retrieval error: {e}")
+            return []
 
         seen_parents = set()
         docs = []
