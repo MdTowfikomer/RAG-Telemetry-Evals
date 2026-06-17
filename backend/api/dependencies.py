@@ -48,7 +48,7 @@ embeddings = LazyProxy(factory.get_embeddings)
 vectorstore = LazyProxy(factory.get_vectorstore)
 
 retriever_adapter = QdrantRetriever(vectorstore=vectorstore)
-reranker_adapter = FlashRankReranker()
+reranker_adapter = LazyProxy(FlashRankReranker)
 pipeline_cache: dict[str, RAGPipeline] = {}
 
 
