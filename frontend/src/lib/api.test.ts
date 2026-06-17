@@ -3,7 +3,7 @@ import type { ChatSettings } from "../types";
 
 const settings: ChatSettings = {
   topK: 3,
-  model: "google/gemini-2.0-flash-001",
+  model: "openrouter/free",
   includeChunks: true,
 };
 
@@ -127,7 +127,7 @@ describe("api adapter", () => {
       headers: { "Content-Type": "application/json" },
     });
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(
-      JSON.stringify({ k: 3, model: "google/gemini-2.0-flash-001" }),
+      JSON.stringify({ k: 3, model: "openrouter/free" }),
     );
     expect(evaluation.version).toBe(2);
     expect(evaluation.status).toBe("pending");

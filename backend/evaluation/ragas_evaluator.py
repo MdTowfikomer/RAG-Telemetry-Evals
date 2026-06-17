@@ -35,7 +35,7 @@ class RagasEvaluator(Evaluator):
         self,
         api_key: Union[str, Callable[[], Any]],
         base_url: str = "https://openrouter.ai/api/v1",
-        eval_model: str = "google/gemini-2.0-flash-001",
+        eval_model: str = "openrouter/free",
         embeddings: Any = None,
     ):
         self.api_key = api_key

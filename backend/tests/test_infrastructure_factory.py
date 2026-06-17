@@ -16,7 +16,7 @@ class TestInfrastructureFactory(unittest.TestCase):
             jina_api_key=SecretStr("test-jina-key"),
             phoenix_url="http://localhost:6006/v1/traces",
             openrouter_api_key=SecretStr("test-openrouter-key"),
-            openrouter_model="google/gemini-2.0-flash-001",
+            openrouter_model="openrouter/free",
             ragas_eval_model="openai/gpt-4o-mini",
             database_url="sqlite:///:memory:",
         )

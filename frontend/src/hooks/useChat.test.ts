@@ -17,7 +17,7 @@ vi.mock("../lib/api", () => ({
 
 const settings: ChatSettings = {
   topK: 3,
-  model: "google/gemini-2.0-flash-001",
+  model: "openrouter/free",
   includeChunks: true,
 };
 

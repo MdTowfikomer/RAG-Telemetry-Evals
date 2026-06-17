@@ -41,6 +41,7 @@ class TestSettings(unittest.TestCase):
     def test_default_cors_origins(self):
         settings = NoEnvFileSettings(openrouter_api_key=SecretStr("test-key"))
         self.assertIn("https://rag-telemetry-evals.onrender.com", settings.cors_origins)
+        self.assertIn("https://ragevals.vercel.app", settings.cors_origins)
         self.assertIn("http://localhost:5173", settings.cors_origins)
 
     def test_cors_origins_parsed_from_json(self):

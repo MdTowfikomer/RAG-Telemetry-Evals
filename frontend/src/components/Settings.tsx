@@ -18,7 +18,8 @@ interface SettingsProps {
 type TabType = "api" | "model" | "instructions";
 
 const PREDEFINED_MODELS = [
-  { label: "Gemini 2.0 Flash (Recommended)", value: "google/gemini-2.0-flash-001" },
+  { label: "OpenRouter Free (Recommended)", value: "openrouter/free" },
+  { label: "Gemini 2.0 Flash", value: "google/gemini-2.0-flash-001" },
   { label: "GPT-4o Mini", value: "openai/gpt-4o-mini" },
   { label: "Claude 3.5 Haiku", value: "anthropic/claude-3.5-haiku" },
 ];

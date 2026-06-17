@@ -8,7 +8,7 @@ import type { ChatSettings } from "./types";
 
 const defaultSettings: ChatSettings = {
   topK: 3,
-  model: "google/gemini-2.0-flash-001",
+  model: "openrouter/free",
   includeChunks: true,
   apiKey: "",
   temperature: 0.7,
@@ -93,6 +93,49 @@ function App() {
     selectAssistantMessage,
     reevaluateAssistantMessage,
   } = useChat(settings);
+
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  // When activeSessionId changes, update url
+  useEffect(() => {
+    if (activeSessionId) {
+      const expectedPath = `/c/${activeSessionId}`;
+      if (window.location.pathname !== expectedPath) {
+        window.history.pushState(null, "", expectedPath);
+        setCurrentPath(expectedPath);
+      }
+    } else {
+      if (window.location.pathname !== "/") {
+        window.history.pushState(null, "", "/");
+        setCurrentPath("/");
+      }
+    }
+  }, [activeSessionId]);
+
+  // When url path changes, load appropriate session
+  useEffect(() => {
+    const match = currentPath.match(/^\/c\/([a-fA-F0-9-]+)$/);
+    if (match) {
+      const sessionIdFromUrl = match[1];
+      if (sessionIdFromUrl !== activeSessionId) {
+        void loadSession(sessionIdFromUrl);
+      }
+    } else if (currentPath === "/" || currentPath === "") {
+      if (activeSessionId !== null) {
+        clearChat();
+      }
+    }
+  }, [currentPath, loadSession, clearChat, activeSessionId]);
 
   const handleSendQuery = async () => {
     const snapshot = query;

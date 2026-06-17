@@ -18,6 +18,7 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:3000",
         "https://rag-telemetry-evals.onrender.com",
+        "https://ragevals.vercel.app",
     ]
 
     model_config = SettingsConfigDict(
