@@ -50,40 +50,52 @@ export function useSessions({
       setIsLoading(false);
       setErrorMessage(null);
 
-      const sessionMessages = await api.fetchSessionMessages(sessionId);
-      const mappedMessages: ChatMessage[] = sessionMessages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        latencyMs:
-          typeof message.latency_ms === "number" ? message.latency_ms : undefined,
-        tokenCount:
-          typeof message.token_count === "number"
-            ? message.token_count
-            : undefined,
-        faithfulness:
-          typeof message.faithfulness === "number"
-            ? message.faithfulness
-            : undefined,
-        answerRelevancy:
-          typeof message.answer_relevancy === "number"
-            ? message.answer_relevancy
-            : undefined,
-        reasoning:
-          typeof message.reasoning === "string" ? message.reasoning : undefined,
-        evaluationStatus: message.evaluation_status ?? undefined,
-        evaluationVersion:
-          typeof message.evaluation_version === "number"
-            ? message.evaluation_version
-            : undefined,
-      }));
+      try {
+        const sessionMessages = await api.fetchSessionMessages(sessionId);
+        const mappedMessages: ChatMessage[] = sessionMessages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          latencyMs:
+            typeof message.latency_ms === "number" ? message.latency_ms : undefined,
+          tokenCount:
+            typeof message.token_count === "number"
+              ? message.token_count
+              : undefined,
+          faithfulness:
+            typeof message.faithfulness === "number"
+              ? message.faithfulness
+              : undefined,
+          answerRelevancy:
+            typeof message.answer_relevancy === "number"
+              ? message.answer_relevancy
+              : undefined,
+          reasoning:
+            typeof message.reasoning === "string" ? message.reasoning : undefined,
+          evaluationStatus: message.evaluation_status ?? undefined,
+          evaluationVersion:
+            typeof message.evaluation_version === "number"
+              ? message.evaluation_version
+              : undefined,
+        }));
 
-      setMessages(mappedMessages.length > 0 ? mappedMessages : initialMessages);
-      sessionIdRef.current = sessionId;
-      setActiveSessionId(sessionId);
-      setContextDocs([]);
-      setSelectedMessageId(null);
-      setEvaluationHistory([]);
+        setMessages(mappedMessages.length > 0 ? mappedMessages : initialMessages);
+        sessionIdRef.current = sessionId;
+        setActiveSessionId(sessionId);
+        setContextDocs([]);
+        setSelectedMessageId(null);
+        setEvaluationHistory([]);
+      } catch (err: any) {
+        console.error("Failed to load session:", err);
+        setErrorMessage("Failed to load session history.");
+        // Still set the session ID locally so the URL doesn't bounce back and forth
+        sessionIdRef.current = sessionId;
+        setActiveSessionId(sessionId);
+        setMessages(initialMessages);
+        setContextDocs([]);
+        setSelectedMessageId(null);
+        setEvaluationHistory([]);
+      }
     },
     [
       initialMessages,
