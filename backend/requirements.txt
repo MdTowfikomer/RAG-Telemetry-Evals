@@ -2,10 +2,8 @@ langchain
 langchain-community==0.4.1
 langchain-qdrant
 langchain-text-splitters
-langchain-huggingface
 langchain-openai
 qdrant-client
-sentence-transformers
 pypdf
 python-dotenv
 openinference-instrumentation-langchain

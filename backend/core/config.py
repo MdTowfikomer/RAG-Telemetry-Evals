@@ -6,7 +6,8 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
     collection_name: str = "rag_collection"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model: str = "jina-embeddings-v4"
+    jina_api_key: SecretStr | None = None
     phoenix_url: str = "http://localhost:6006/v1/traces"
     openrouter_api_key: SecretStr | None = None
     openrouter_model: str = "openrouter/free"

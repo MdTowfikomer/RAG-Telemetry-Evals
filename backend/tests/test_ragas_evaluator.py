@@ -16,6 +16,10 @@ class TestRagasEvaluator(unittest.IsolatedAsyncioTestCase):
     @patch("backend.evaluation.ragas_evaluator.llm_factory")
     async def test_evaluate_success(self, mock_llm_factory, mock_openai, mock_evaluate):
         # Setup mocks
+        from ragas.llms.base import InstructorBaseRagasLLM
+        mock_llm = MagicMock(spec=InstructorBaseRagasLLM)
+        mock_llm_factory.return_value = mock_llm
+
         import pandas as pd
         mock_df = pd.DataFrame({"faithfulness": [0.9], "answer_relevancy": [0.8]})
         mock_result = MagicMock()

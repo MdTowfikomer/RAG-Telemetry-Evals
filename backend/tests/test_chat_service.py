@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.core import ChatMessage, ChatSession, Document
 from backend.core.exceptions import SessionNotFoundError
@@ -81,11 +81,11 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         db.close()
 
         with Session(self.engine) as session:
-            sessions = session.query(ChatSession).all()
+            sessions = session.exec(select(ChatSession)).all()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].title, "test query...")
 
-            messages = session.query(ChatMessage).all()
+            messages = session.exec(select(ChatMessage)).all()
             self.assertEqual(len(messages), 2)  # User and assistant messages
             self.assertEqual(messages[0].role, "user")
             self.assertEqual(messages[0].content, "test query")
@@ -135,10 +135,10 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         db.close()
 
         with Session(self.engine) as session:
-            sessions = session.query(ChatSession).all()
+            sessions = session.exec(select(ChatSession)).all()
             self.assertEqual(len(sessions), 1)  # No new session created
 
-            messages = session.query(ChatMessage).all()
+            messages = session.exec(select(ChatMessage)).all()
             self.assertEqual(len(messages), 2)  # User and assistant messages
             self.assertEqual(messages[0].session_id, existing_session.id)
             self.assertEqual(messages[1].session_id, existing_session.id)
@@ -188,11 +188,11 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         db.close()
 
         with Session(self.engine) as session:
-            sessions = session.query(ChatSession).all()
+            sessions = session.exec(select(ChatSession)).all()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].title, "stream query...")
 
-            messages = session.query(ChatMessage).all()
+            messages = session.exec(select(ChatMessage)).all()
             self.assertEqual(len(messages), 2)  # User and assistant messages
             self.assertEqual(messages[0].role, "user")
             self.assertEqual(messages[0].content, "stream query")
@@ -233,10 +233,10 @@ class TestChatService(unittest.IsolatedAsyncioTestCase):
         db.close()
 
         with Session(self.engine) as session:
-            sessions = session.query(ChatSession).all()
+            sessions = session.exec(select(ChatSession)).all()
             self.assertEqual(len(sessions), 1)  # No new session created
 
-            messages = session.query(ChatMessage).all()
+            messages = session.exec(select(ChatMessage)).all()
             self.assertEqual(len(messages), 2)  # User and assistant messages
             self.assertEqual(messages[0].session_id, existing_session.id)
             self.assertEqual(messages[1].session_id, existing_session.id)

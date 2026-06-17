@@ -5,13 +5,29 @@ from datasets import Dataset
 from openai import OpenAI
 from opentelemetry import trace as otel_trace
 from ragas import evaluate
-from ragas.embeddings.base import LangchainEmbeddingsWrapper
+from ragas.embeddings.base import BaseRagasEmbedding
 from ragas.llms import llm_factory
-from ragas.metrics import AnswerRelevancy, Faithfulness
+from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 from ragas.metrics.base import Metric
 from ragas.run_config import RunConfig
 
 from .interfaces import EvalContext, Evaluator
+
+
+class RagasLangchainEmbeddings(BaseRagasEmbedding):
+    """
+    Custom wrapper to adapt LangChain embeddings for newer Ragas versions,
+    replacing the deprecated LangchainEmbeddingsWrapper.
+    """
+    def __init__(self, embeddings: Any):
+        super().__init__()
+        self.embeddings = embeddings
+
+    def embed_text(self, text: str) -> list[float]:
+        return self.embeddings.embed_query(text)
+
+    async def aembed_text(self, text: str) -> list[float]:
+        return await self.embeddings.aembed_query(text)
 
 
 class RagasEvaluator(Evaluator):
@@ -58,10 +74,8 @@ class RagasEvaluator(Evaluator):
                     client=judge_client,
                 )
 
-                # Setup Ragas Embeddings
-                ragas_embeddings = LangchainEmbeddingsWrapper(
-                    embeddings=self.embeddings
-                )  # what does ragas_embeddings do?
+                # Setup Ragas Embeddings using our custom wrapper to avoid deprecation warnings
+                ragas_embeddings = RagasLangchainEmbeddings(embeddings=self.embeddings)
 
                 metrics: Sequence[Metric] = cast(  # Understand what these metrics do
                     Sequence[Metric],

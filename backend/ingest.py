@@ -67,7 +67,10 @@ def ingest(factory: InfrastructureFactory):
     print(f"Created {len(splits)} child chunks associated with parents.")
 
     # Infra dependencies
-    _ = factory.get_embeddings()
+    embeddings = factory.get_embeddings()
+    sample_emb = embeddings.embed_query("test")
+    vector_size = len(sample_emb)
+    print(f"Detected embedding size: {vector_size}")
     client = factory.get_qdrant_client()
 
     # Recreate collection to ensure sparse vector configuration is active
@@ -79,7 +82,7 @@ def ingest(factory: InfrastructureFactory):
     client.create_collection(
         collection_name=factory.settings.collection_name,
         vectors_config=models.VectorParams(
-            size=384, distance=models.Distance.COSINE
+            size=vector_size, distance=models.Distance.COSINE
         ),
         sparse_vectors_config={
             "fastembed-sparse": models.SparseVectorParams(

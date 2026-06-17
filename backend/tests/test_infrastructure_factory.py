@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 
 from pydantic import SecretStr
 
@@ -10,12 +10,15 @@ class TestInfrastructureFactory(unittest.TestCase):
     def setUp(self):
         self.settings = Settings(
             qdrant_url="http://localhost:6333",
+            qdrant_api_key=None,
             collection_name="rag_collection",
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            embedding_model="jina-embeddings-v4",
+            jina_api_key=SecretStr("test-jina-key"),
             phoenix_url="http://localhost:6006/v1/traces",
             openrouter_api_key=SecretStr("test-openrouter-key"),
             openrouter_model="google/gemini-2.0-flash-001",
             ragas_eval_model="openai/gpt-4o-mini",
+            database_url="sqlite:///:memory:",
         )
 
     @patch("backend.core.infrastructure.LangChainInstrumentor")
@@ -52,7 +55,7 @@ class TestInfrastructureFactory(unittest.TestCase):
         mock_set_tracer_provider.assert_called_once_with(tracer_provider_instance)
         instrumentor_instance.instrument.assert_called_once()
 
-    @patch("backend.core.infrastructure.LCHuggingFaceEmbeddings")
+    @patch("backend.core.infrastructure.JinaEmbeddings")
     def test_get_embeddings_is_cached(self, mock_embeddings_cls):
         factory = InfrastructureFactory(self.settings)
 
@@ -61,7 +64,9 @@ class TestInfrastructureFactory(unittest.TestCase):
 
         self.assertIs(first, second)
         mock_embeddings_cls.assert_called_once_with(
-            model_name=self.settings.embedding_model
+            jina_api_key=self.settings.jina_api_key,
+            model_name=self.settings.embedding_model,
+            session=ANY,
         )
 
     @patch("backend.core.infrastructure.QdrantClient")
@@ -80,7 +85,7 @@ class TestInfrastructureFactory(unittest.TestCase):
     @patch("backend.core.infrastructure.FastEmbedSparse")
     @patch("backend.core.infrastructure.QdrantVectorStore")
     @patch("backend.core.infrastructure.QdrantClient")
-    @patch("backend.core.infrastructure.LCHuggingFaceEmbeddings")
+    @patch("backend.core.infrastructure.JinaEmbeddings")
     def test_get_vectorstore_is_cached_and_uses_factory_dependencies(
         self,
         mock_embeddings_cls,
@@ -95,7 +100,9 @@ class TestInfrastructureFactory(unittest.TestCase):
 
         self.assertIs(first, second)
         mock_embeddings_cls.assert_called_once_with(
-            model_name=self.settings.embedding_model
+            jina_api_key=self.settings.jina_api_key,
+            model_name=self.settings.embedding_model,
+            session=ANY,
         )
         mock_qdrant_client_cls.assert_called_once_with(
             url=self.settings.qdrant_url,
@@ -110,7 +117,7 @@ class TestInfrastructureFactory(unittest.TestCase):
             embedding=mock_embeddings_cls.return_value,
             sparse_embedding=mock_sparse_embeddings_cls.return_value,
             sparse_vector_name="fastembed-sparse",
-            retrieval_mode=unittest.mock.ANY,
+            retrieval_mode=ANY,
         )
 
     @patch("backend.core.infrastructure.FastEmbedSparse")

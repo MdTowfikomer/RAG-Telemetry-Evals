@@ -31,8 +31,21 @@ openrouter_api_key_var: contextvars.ContextVar[SecretStr | None] = contextvars.C
     "openrouter_api_key_var", default=None
 )
 tracer = otel_trace.get_tracer(__name__)
-embeddings = factory.get_embeddings()
-vectorstore = factory.get_vectorstore()
+class LazyProxy:
+    def __init__(self, init_fn):
+        self._init_fn = init_fn
+        self._obj = None
+
+    def _get_obj(self):
+        if self._obj is None:
+            self._obj = self._init_fn()
+        return self._obj
+
+    def __getattr__(self, name):
+        return getattr(self._get_obj(), name)
+
+embeddings = LazyProxy(factory.get_embeddings)
+vectorstore = LazyProxy(factory.get_vectorstore)
 
 retriever_adapter = QdrantRetriever(vectorstore=vectorstore)
 reranker_adapter = FlashRankReranker()
