@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -22,6 +23,11 @@ export function useScoreSubscription({
   setSelectedMessageId,
   loadEvaluationHistory,
 }: UseScoreSubscriptionArgs) {
+  // Stable ref so the SSE connection is never torn down just because
+  // loadEvaluationHistory changed reference between renders.
+  const loadEvaluationHistoryRef = useRef(loadEvaluationHistory);
+  useEffect(() => { loadEvaluationHistoryRef.current = loadEvaluationHistory; });
+
   useEffect(() => {
     const cleanup = api.streamScores(
       (event) => {
@@ -77,7 +83,7 @@ export function useScoreSubscription({
           if (selectedMessageIdRef.current === aliasId) {
             setSelectedMessageId(event.message_id);
           }
-          void loadEvaluationHistory(messageIdForHistory);
+          void loadEvaluationHistoryRef.current(messageIdForHistory);
         }
       },
       () => {
@@ -88,11 +94,6 @@ export function useScoreSubscription({
     return () => {
       cleanup();
     };
-  }, [
-    assistantIdAliasRef,
-    loadEvaluationHistory,
-    selectedMessageIdRef,
-    setMessages,
-    setSelectedMessageId,
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantIdAliasRef, selectedMessageIdRef, setMessages, setSelectedMessageId]);
 }

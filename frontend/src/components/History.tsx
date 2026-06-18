@@ -3,14 +3,14 @@ import type { HistoryItem } from "../types";
 
 interface HistoryProps {
   items: HistoryItem[];
-  activeSessionId: string | null;
+  activeChatId: string | null;
   onSelectSession: (sessionId: string) => void;
   onNewChat: () => void;
 }
 
 function History({
   items,
-  activeSessionId,
+  activeChatId,
   onSelectSession,
   onNewChat,
 }: HistoryProps) {
@@ -37,7 +37,7 @@ function History({
       ) : (
         <ul className="space-y-3">
           {items.map((item) => {
-            const isActive = item.id === activeSessionId;
+            const isActive = `/c/${item.id}` === activeChatId;
 
             return (
               <li key={item.id}>

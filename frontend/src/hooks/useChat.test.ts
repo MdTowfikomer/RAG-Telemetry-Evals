@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { api } from "../lib/api";
 import { useChat } from "./useChat";
-import type { ChatSettings } from "../types";
+import type { ChatSettings, SessionMessage } from "../types";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -123,7 +123,72 @@ describe("useChat", () => {
     expect(result.current.messages).toHaveLength(2);
     expect(result.current.messages[0].content).toBe("What is RAG?");
     expect(result.current.messages[1].content).toContain("combines retrieval");
-    expect(result.current.activeSessionId).toBe("session-1");
+  });
+
+  it("keeps the latest overlapping session load", async () => {
+    let resolveFirst: ((value: SessionMessage[]) => void) | null = null;
+    let resolveSecond: ((value: SessionMessage[]) => void) | null = null;
+
+    vi.mocked(api.fetchSessionMessages).mockImplementation((sessionId) => {
+      return new Promise((resolve) => {
+        if (sessionId === "session-1") {
+          resolveFirst = resolve;
+        } else {
+          resolveSecond = resolve;
+        }
+      });
+    });
+
+    const { result } = renderHook(() => useChat(settings));
+
+    let firstLoad!: Promise<void>;
+    let secondLoad!: Promise<void>;
+
+    await act(async () => {
+      firstLoad = result.current.loadSession("session-1");
+      secondLoad = result.current.loadSession("session-2");
+    });
+
+    await act(async () => {
+      resolveSecond?.([
+        {
+          id: "assistant-2",
+          session_id: "session-2",
+          role: "assistant",
+          content: "Newest chat",
+          created_at: "2026-01-01T00:00:02Z",
+        },
+      ]);
+      await secondLoad;
+    });
+
+    await act(async () => {
+      resolveFirst?.([
+        {
+          id: "assistant-1",
+          session_id: "session-1",
+          role: "assistant",
+          content: "Old chat",
+          created_at: "2026-01-01T00:00:01Z",
+        },
+      ]);
+      await firstLoad;
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("Newest chat");
+  });
+
+  it("keeps an empty session history empty", async () => {
+    vi.mocked(api.fetchSessionMessages).mockResolvedValue([]);
+
+    const { result } = renderHook(() => useChat(settings));
+
+    await act(async () => {
+      await result.current.loadSession("session-1");
+    });
+
+    expect(result.current.messages).toHaveLength(0);
   });
 
   it("applies score updates to the matching assistant message", async () => {

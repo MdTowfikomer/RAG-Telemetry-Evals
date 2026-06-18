@@ -20,7 +20,7 @@ type UseChatStreamArgs = {
   setIsLoading: Dispatch<SetStateAction<boolean>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
   sessionIdRef: MutableRefObject<string | null>;
-  setActiveSessionId: Dispatch<SetStateAction<string | null>>;
+  navigateToPath: (path: string) => void;
   selectedMessageIdRef: MutableRefObject<string | null>;
   setSelectedMessageId: Dispatch<SetStateAction<string | null>>;
   refreshSessions: () => Promise<void>;
@@ -34,7 +34,7 @@ export function useChatStream({
   setIsLoading,
   setErrorMessage,
   sessionIdRef,
-  setActiveSessionId,
+  navigateToPath,
   selectedMessageIdRef,
   setSelectedMessageId,
   refreshSessions,
@@ -122,7 +122,8 @@ export function useChatStream({
           },
           (meta) => {
             sessionIdRef.current = meta.session_id;
-            setActiveSessionId(meta.session_id);
+            navigateToPath(`/c/${meta.session_id}`);
+            void refreshSessions();
             assistantIdAliasRef.current[meta.assistant_message_id] =
               activeAssistantMessageId;
             setMessages((prev) =>
@@ -149,7 +150,6 @@ export function useChatStream({
         );
 
         streamCleanupRef.current = cleanup;
-        await refreshSessions();
       } catch (error) {
         const message =
           error instanceof Error
@@ -174,7 +174,7 @@ export function useChatStream({
       refreshSessions,
       selectedMessageIdRef,
       sessionIdRef,
-      setActiveSessionId,
+      navigateToPath,
       setContextDocs,
       setErrorMessage,
       setIsLoading,

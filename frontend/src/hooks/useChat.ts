@@ -14,7 +14,10 @@ const initialMessages: ChatMessage[] = [
   },
 ];
 
-export function useChat(settings: ChatSettings) {
+export function useChat(
+  settings: ChatSettings,
+  navigateToPath: (path: string) => void = () => {},
+) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -38,7 +41,7 @@ export function useChat(settings: ChatSettings) {
     setIsLoading,
     setErrorMessage,
     sessionIdRef: sessions.sessionIdRef,
-    setActiveSessionId: sessions.setActiveSessionId,
+    navigateToPath,
     selectedMessageIdRef: evaluations.selectedMessageIdRef,
     setSelectedMessageId: evaluations.setSelectedMessageId,
     refreshSessions: sessions.refreshSessions,
@@ -77,7 +80,7 @@ export function useChat(settings: ChatSettings) {
     isLoading,
     errorMessage,
     sessions: sessions.sessions,
-    activeSessionId: sessions.activeSessionId,
+    sessionIdRef: sessions.sessionIdRef,
     selectedMessageId: evaluations.selectedMessageId,
     evaluationHistory: evaluations.evaluationHistory,
     sendMessage: stream.sendMessage,

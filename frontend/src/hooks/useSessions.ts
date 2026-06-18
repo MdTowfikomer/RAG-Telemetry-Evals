@@ -34,8 +34,8 @@ export function useSessions({
   setEvaluationHistory,
 }: UseSessionsArgs) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const loadSessionRequestIdRef = useRef(0);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await api.fetchSessions());
@@ -47,11 +47,16 @@ export function useSessions({
 
   const loadSession = useCallback(
     async (sessionId: string) => {
+      const requestId = ++loadSessionRequestIdRef.current;
+      sessionIdRef.current = sessionId;
       setIsLoading(false);
       setErrorMessage(null);
 
       try {
         const sessionMessages = await api.fetchSessionMessages(sessionId);
+        if (loadSessionRequestIdRef.current !== requestId) {
+          return;
+        }
         const mappedMessages: ChatMessage[] = sessionMessages.map((message) => ({
           id: message.id,
           role: message.role,
@@ -79,38 +84,28 @@ export function useSessions({
               : undefined,
         }));
 
-        setMessages(mappedMessages.length > 0 ? mappedMessages : initialMessages);
-        sessionIdRef.current = sessionId;
-        setActiveSessionId(sessionId);
+        setMessages(mappedMessages);
         setContextDocs([]);
         setSelectedMessageId(null);
         setEvaluationHistory([]);
       } catch (err: any) {
+        if (loadSessionRequestIdRef.current !== requestId) {
+          return;
+        }
         console.error("Failed to load session:", err);
         setErrorMessage("Failed to load session history.");
-        // Still set the session ID locally so the URL doesn't bounce back and forth
-        sessionIdRef.current = sessionId;
-        setActiveSessionId(sessionId);
-        setMessages(initialMessages);
+        setMessages([]);
         setContextDocs([]);
         setSelectedMessageId(null);
         setEvaluationHistory([]);
       }
     },
-    [
-      initialMessages,
-      setContextDocs,
-      setErrorMessage,
-      setEvaluationHistory,
-      setIsLoading,
-      setMessages,
-      setSelectedMessageId,
-    ],
+    [setContextDocs, setErrorMessage, setEvaluationHistory, setIsLoading, setMessages, setSelectedMessageId],
   );
 
   const resetSessionState = useCallback(() => {
+    loadSessionRequestIdRef.current += 1;
     sessionIdRef.current = null;
-    setActiveSessionId(null);
   }, []);
 
   const resetToInitialMessages = useCallback(() => {
@@ -136,8 +131,6 @@ export function useSessions({
 
   return {
     sessions,
-    activeSessionId,
-    setActiveSessionId,
     sessionIdRef,
     refreshSessions,
     loadSession,

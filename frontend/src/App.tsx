@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import ChatPane from "./components/ChatPane";
 import LeftPane from "./components/LeftPane";
 import RightPane from "./components/RightPane";
@@ -77,13 +77,21 @@ function App() {
     localStorage.setItem("sidebar_right_collapsed", String(nextVal));
   };
 
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
+  const navigateToPath = useCallback((path: string) => {
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, "", path);
+    }
+    setCurrentPath(path);
+  }, []);
+
   const {
     messages,
     contextDocs,
     isLoading,
     errorMessage,
     sessions,
-    activeSessionId,
+    sessionIdRef,
     selectedMessageId,
     evaluationHistory,
     sendMessage,
@@ -92,9 +100,15 @@ function App() {
     deleteSession,
     selectAssistantMessage,
     reevaluateAssistantMessage,
-  } = useChat(settings);
+  } = useChat(settings, navigateToPath);
 
-  const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
+  // Track whether the first URL-based init has been handled
+  const didInitRef = useRef(false);
+  // Stable refs so the routing effect never re-runs just because a callback changed reference
+  const loadSessionRef = useRef(loadSession);
+  const clearChatRef = useRef(clearChat);
+  useEffect(() => { loadSessionRef.current = loadSession; });
+  useEffect(() => { clearChatRef.current = clearChat; });
 
   useEffect(() => {
     const handlePopState = () => {
@@ -106,34 +120,39 @@ function App() {
     };
   }, []);
 
-  // When activeSessionId changes, update url
-  useEffect(() => {
-    if (activeSessionId) {
-      const expectedPath = `/c/${activeSessionId}`;
-      if (window.location.pathname !== expectedPath) {
-        window.history.pushState(null, "", expectedPath);
-        setCurrentPath(expectedPath);
-      }
-    } else {
-      if (window.location.pathname !== "/") {
-        window.history.pushState(null, "", "/");
-        setCurrentPath("/");
-      }
-    }
-  }, [activeSessionId]);
-
-  // When url path changes, load appropriate session
+  // When url path changes (popstate / programmatic nav), load the appropriate session.
+  // Deps are ONLY primitives — no callback refs — to prevent re-running on every render.
   useEffect(() => {
     const match = currentPath.match(/^\/c\/([a-fA-F0-9-]+)$/);
     if (match) {
       const sessionIdFromUrl = match[1];
-      if (sessionIdFromUrl !== activeSessionId) {
-        void loadSession(sessionIdFromUrl);
+      didInitRef.current = true;
+      if (sessionIdFromUrl !== sessionIdRef.current) {
+        void loadSessionRef.current(sessionIdFromUrl);
       }
     } else if (currentPath === "/" || currentPath === "") {
-      clearChat();
+      if (!didInitRef.current) {
+        // First render at '/' — no session to load, just mark init done
+        didInitRef.current = true;
+      } else if (sessionIdRef.current !== null) {
+        // Only call clearChat when there IS an active session to clear;
+        // prevents infinite loop when the active chat is already null
+        clearChatRef.current();
+      }
     }
-  }, [currentPath, loadSession, clearChat, activeSessionId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath]);
+
+  const activeChatPath = currentPath.startsWith("/c/") ? currentPath : null;
+
+  const handleNewChat = () => {
+    if (window.location.pathname === "/") {
+      clearChat();
+      return;
+    }
+
+    navigateToPath("/");
+  };
 
   const handleSendQuery = async () => {
     const snapshot = query;
@@ -154,11 +173,11 @@ function App() {
             onGoToSettings={handleOpenSettings}
             onCollapse={handleToggleLeft}
             sessions={sessions}
-            activeSessionId={activeSessionId}
+            activeChatId={activeChatPath}
             onSelectSession={(sessionId) => {
-              void loadSession(sessionId);
+              navigateToPath(`/c/${sessionId}`);
             }}
-            onNewChat={clearChat}
+            onNewChat={handleNewChat}
             onDeleteSession={deleteSession}
           />
         </div>
@@ -171,7 +190,7 @@ function App() {
             query={query}
             onQueryChange={setQuery}
             onSendQuery={handleSendQuery}
-            onClearChat={clearChat}
+            onClearChat={handleNewChat}
             onSelectAssistantMessage={(messageId) => {
               void selectAssistantMessage(messageId);
             }}

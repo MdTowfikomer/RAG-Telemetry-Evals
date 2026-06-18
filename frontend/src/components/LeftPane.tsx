@@ -26,7 +26,7 @@ interface LeftPaneProps {
   onGoToSettings: () => void;
   onCollapse: () => void;
   sessions: SessionSummary[];
-  activeSessionId: string | null;
+  activeChatId: string | null;
   onSelectSession: (sessionId: string) => void;
   onNewChat: () => void;
   onDeleteSession: (sessionId: string) => void;
@@ -44,7 +44,7 @@ function LeftPane({
   onGoToSettings,
   onCollapse,
   sessions,
-  activeSessionId,
+  activeChatId,
   onSelectSession,
   onNewChat,
   onDeleteSession,
@@ -617,7 +617,7 @@ Common errors encountered with ${query} and mitigation techniques including cach
             ) : (
               <div className="space-y-1.5 max-h-[160px] overflow-y-auto custom-scrollbar">
                 {sessions.map((session) => {
-                  const isActive = session.id === activeSessionId;
+                  const isActive = `/c/${session.id}` === activeChatId;
                   return (
                     <div
                       key={session.id}
