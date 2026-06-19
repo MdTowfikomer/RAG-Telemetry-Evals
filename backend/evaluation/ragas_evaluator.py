@@ -31,11 +31,17 @@ class RagasLangchainEmbeddings(BaseRagasEmbedding):
     async def aembed_query(self, text: str) -> list[float]:
         return await self.embeddings.aembed_query(text)
 
-    def embed_text(self, text: str) -> list[float]:
+    def embed_text(self, text: str, *args, **kwargs) -> list[float]:
         return self.embed_query(text)
 
-    async def aembed_text(self, text: str) -> list[float]:
+    async def aembed_text(self, text: str, *args, **kwargs) -> list[float]:
         return await self.aembed_query(text)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embeddings.embed_documents(texts)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self.embeddings.aembed_documents(texts)
 
 
 class RagasEvaluator(Evaluator):

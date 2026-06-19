@@ -1,4 +1,4 @@
-from langchain_community.embeddings import CohereEmbeddings
+from langchain_cohere import CohereEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 from qdrant_client import QdrantClient
@@ -28,6 +28,8 @@ class InfrastructureFactory:
             self._embeddings = CohereEmbeddings(
                 model=self.settings.embedding_model,
                 cohere_api_key=self.settings.cohere_api_key.get_secret_value(),
+                client=None,
+                async_client=None,
             )
         return self._embeddings
 

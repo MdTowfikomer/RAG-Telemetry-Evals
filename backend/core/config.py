@@ -1,3 +1,4 @@
+import json
 from typing import Any
 from pydantic import SecretStr, model_validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,7 +32,6 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             # Try to parse as JSON list
             try:
-                import json
                 parsed = json.loads(v)
                 if isinstance(parsed, list):
                     return [str(item).strip() for item in parsed]

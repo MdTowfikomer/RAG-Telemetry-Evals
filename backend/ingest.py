@@ -112,6 +112,8 @@ def ingest(factory: InfrastructureFactory):
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     settings = Settings(
         openrouter_api_key=SecretStr(
             os.getenv("OPENROUTER_API_KEY", "ingest-not-required")

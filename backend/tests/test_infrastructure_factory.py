@@ -39,6 +39,8 @@ class TestInfrastructureFactory(unittest.TestCase):
         mock_embeddings_cls.assert_called_once_with(
             model=self.settings.embedding_model,
             cohere_api_key=self.settings.cohere_api_key.get_secret_value(),
+            client=None,
+            async_client=None,
         )
 
     @patch("backend.core.infrastructure.QdrantClient")
@@ -74,6 +76,8 @@ class TestInfrastructureFactory(unittest.TestCase):
         mock_embeddings_cls.assert_called_once_with(
             model=self.settings.embedding_model,
             cohere_api_key=self.settings.cohere_api_key.get_secret_value(),
+            client=None,
+            async_client=None,
         )
         mock_qdrant_client_cls.assert_called_once_with(
             url=self.settings.qdrant_url,

@@ -23,6 +23,7 @@ dependencies = [
     "requests>=2.33.1",
     "sqlmodel>=0.0.38",
     "psycopg2-binary>=2.9.9",
+    "langchain-cohere>=0.6.0",
 ]
 
 [project.optional-dependencies]
