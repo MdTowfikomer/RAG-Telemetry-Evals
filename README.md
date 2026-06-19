@@ -4,7 +4,6 @@ This project implements a modular Retrieval-Augmented Generation (RAG) system wi
 
 ## Key Features
 
-- **Visual Tracing**: Nested step-by-step visualization of the RAG pipeline (Query -> Retrieval -> Context Construction -> Generation) via Arize Phoenix.
 - **Automated Evals**: Background computation of "RAGAS" metrics (Faithfulness, Answer Relevancy) for every query, with versioned and persisted results.
 - **Real-time Metric Surfacing**: Direct exposure of accuracy (Ragas) and performance (Latency) metrics in the UI, pushed via Server-Sent Events (SSE) as they are computed.
 - **Persistent History**: A relational storage layer to save chat sessions, messages, and evaluation results, accessible via a history sidebar.
@@ -17,7 +16,6 @@ This project implements a modular Retrieval-Augmented Generation (RAG) system wi
 - **Backend**: Python 3.12+, FastAPI
 - **Frontend**: TypeScript, React, Vite
 - **Vector Database**: Qdrant
-- **Observability**: Arize Phoenix (via OpenTelemetry)
 - **RAG Framework**: LangChain
 - **LLM Integration**: LangChain OpenAI, LangChain HuggingFace, OpenRouter (OpenAI SDK compatible)
 - **RAG Evaluation**: Ragas
@@ -29,7 +27,7 @@ This project implements a modular Retrieval-Augmented Generation (RAG) system wi
 - **Python 3.12+**
 - **Node.js 18+** (for frontend development)
 - **pnpm** (recommended for JavaScript package management) or npm/yarn
-- **Docker** (for Qdrant and Arize Phoenix)
+- **Docker** (for Qdrant)
 
 ## Getting Started
 
@@ -51,8 +49,6 @@ OPENAI_API_KEY="sk-..." # Your OpenAI API key or OpenRouter key
 OPENAI_BASE_URL="https://openrouter.ai/api/v1" # Example for OpenRouter
 QDRANT_HOST="localhost"
 QDRANT_PORT="6333"
-PHOENIX_HOST="localhost"
-PHOENIX_PORT="6006"
 ```
 
 ### 3. Install Backend Dependencies
@@ -63,7 +59,7 @@ uv pip install -e ".[dev]"
 
 ### 4. Start Docker Services
 
-Start Qdrant and Arize Phoenix using Docker Compose:
+Start Qdrant using Docker Compose:
 
 ```bash
 docker compose up -d
@@ -127,7 +123,7 @@ Open your browser to `http://localhost:5173` (or the port indicated by Vite).
 ├── qdrant_storage/            # Persistent storage for Qdrant vector database
 ├── .gitignore
 ├── .python-version
-├── docker-compose.yml         # Docker configuration for Qdrant and Phoenix
+├── docker-compose.yml         # Docker configuration for Qdrant
 ├── main.py                    # Main script (if any for overall orchestration)
 ├── PRD.md                     # Product Requirements Document
 ├── pyproject.toml             # Python project configuration and dependencies
@@ -165,8 +161,6 @@ Streaming Response (SSE to Frontend)
     ↓
 Ragas Evaluation (Background task in Backend)
     ↓
-Arize Phoenix (Telemetry Tracing)
-    ↓
 SQLite Database (Session History, Messages, Evaluations)
     ↓
 UI Update (Frontend via SSE)
@@ -191,7 +185,6 @@ UI Update (Frontend via SSE)
 **External Services**
 
 -   **Qdrant**: Vector database for efficient similarity search during retrieval. Persistent data stored in `./qdrant_storage`.
--   **Arize Phoenix**: Observability platform for visual tracing of the RAG pipeline. Accessible via `http://localhost:6006`.
 
 ### Database Schema (Conceptual)
 
@@ -236,8 +229,6 @@ evaluations
 | :-------------- | :---------------------------------------------- | :----------- |
 | `QDRANT_HOST`   | Hostname for the Qdrant service                 | `localhost`  |
 | `QDRANT_PORT`   | Port for the Qdrant service                     | `6333`       |
-| `PHOENIX_HOST`  | Hostname for the Arize Phoenix service          | `localhost`  |
-| `PHOENIX_PORT`  | Port for the Arize Phoenix service              | `6006`       |
 | `DATABASE_URL`  | Connection string for the SQLite database | `sqlite:///sqlite.db` |
 
 
@@ -246,7 +237,7 @@ evaluations
 ### General
 
 -   `uv pip install -e ".[dev]"`: Install backend dependencies.
--   `docker compose up -d`: Start Qdrant and Arize Phoenix services.
+-   `docker compose up -d`: Start Qdrant.
 -   `docker compose down`: Stop Docker services.
 
 ### Backend
@@ -347,7 +338,6 @@ pnpm dev
 **Solution:**
 1.  Check `OPENAI_API_KEY` and `OPENAI_BASE_URL` in your `.env` file.
 2.  Verify Qdrant is running: `docker ps`.
-3.  Check Arize Phoenix UI (`http://localhost:6006`) for detailed traces to pinpoint the exact failure point in the RAG chain.
 
 ## Further Notes
 

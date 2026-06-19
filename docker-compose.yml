@@ -6,11 +6,3 @@ services:
       - "6334:6334"
     volumes:
       - ./qdrant_storage:/qdrant/storage
-
-  phoenix:
-    image: arizephoenix/phoenix:latest
-    ports:
-      - "6006:6006"
-    environment:
-      - PHOENIX_HOST=0.0.0.0
-      - PHOENIX_PORT=6006

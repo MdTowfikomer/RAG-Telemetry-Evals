@@ -6,16 +6,12 @@ langchain-openai
 qdrant-client
 pypdf
 python-dotenv
-openinference-instrumentation-langchain
 opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp
-arize-phoenix
 uvicorn
 fastapi
 pydantic
 pydantic-settings
-ragas
+ragas==0.4.3
 datasets
 sqlmodel
 fastembed

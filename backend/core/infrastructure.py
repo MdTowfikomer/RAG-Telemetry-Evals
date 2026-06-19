@@ -1,15 +1,8 @@
-from langchain_community.embeddings import JinaEmbeddings
+from langchain_community.embeddings import CohereEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
-from openinference.instrumentation.langchain import LangChainInstrumentor
-from opentelemetry import trace as otel_trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from qdrant_client import QdrantClient
 from sqlmodel import Session, SQLModel, create_engine
-from pydantic import SecretStr
 
 from .config import Settings
 from .models import ChatMessage, ChatSession, Evaluation, UploadedFile  # Ensure models are registered
@@ -26,27 +19,15 @@ class InfrastructureFactory:
         self._tracing_initialized = False
 
     def setup_tracing(self, service_name: str) -> None:
-        if self._tracing_initialized:
-            return
-
-        resource = Resource(attributes={"service.name": service_name})
-        exporter = OTLPSpanExporter(endpoint=self.settings.phoenix_url)
-        tracer_provider = TracerProvider(resource=resource)
-        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-        otel_trace.set_tracer_provider(tracer_provider)
-        LangChainInstrumentor().instrument()
         self._tracing_initialized = True
 
     def get_embeddings(self):
         if self._embeddings is None:
-            import requests
-            api_key = self.settings.jina_api_key
-            if api_key is None:
-                api_key = SecretStr("dummy_jina_key_to_pass_validation")
-            self._embeddings = JinaEmbeddings(
-                jina_api_key=api_key.get_secret_value(),
-                model_name=self.settings.embedding_model,
-                session=requests.Session(),
+            if self.settings.cohere_api_key is None:
+                raise RuntimeError("COHERE_API_KEY is required")
+            self._embeddings = CohereEmbeddings(
+                model=self.settings.embedding_model,
+                cohere_api_key=self.settings.cohere_api_key.get_secret_value(),
             )
         return self._embeddings
 
@@ -90,7 +71,7 @@ class InfrastructureFactory:
                     sample_emb = embeddings.embed_query("test")
                     vector_size = len(sample_emb)
                 except Exception:
-                    vector_size = 768  # Fallback size for jina-embeddings-v4
+                    vector_size = 768
                 
                 from qdrant_client.http import models
                 client.create_collection(

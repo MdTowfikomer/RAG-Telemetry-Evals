@@ -115,7 +115,8 @@ if __name__ == "__main__":
     settings = Settings(
         openrouter_api_key=SecretStr(
             os.getenv("OPENROUTER_API_KEY", "ingest-not-required")
-        )
+        ),
+        cohere_api_key=SecretStr(os.getenv("COHERE_API_KEY", "ingest-not-required")),
     )
     factory = InfrastructureFactory(settings)
     factory.setup_tracing(service_name="rag-ingest")

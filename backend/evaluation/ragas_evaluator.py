@@ -1,14 +1,15 @@
 import math
-from typing import Any, Dict, Sequence, Union, Callable, cast
+from typing import Any, Dict, Union, Callable
 
-from datasets import Dataset
 from openai import OpenAI
 from opentelemetry import trace as otel_trace
 from ragas import evaluate
+from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
 from ragas.embeddings.base import BaseRagasEmbedding
 from ragas.llms import llm_factory
-from ragas.metrics.collections import AnswerRelevancy, Faithfulness
-from ragas.metrics.base import Metric
+from ragas.llms.base import InstructorBaseRagasLLM
+from ragas.metrics._faithfulness import Faithfulness
+from ragas.metrics._answer_relevance import ResponseRelevancy
 from ragas.run_config import RunConfig
 
 from .interfaces import EvalContext, Evaluator
@@ -16,18 +17,25 @@ from .interfaces import EvalContext, Evaluator
 
 class RagasLangchainEmbeddings(BaseRagasEmbedding):
     """
-    Custom wrapper to adapt LangChain embeddings for newer Ragas versions,
-    replacing the deprecated LangchainEmbeddingsWrapper.
+    Thin wrapper adapting a LangChain embedding object to the ragas 0.4.x
+    BaseRagasEmbedding interface (embed_text / aembed_text).
     """
+
     def __init__(self, embeddings: Any):
         super().__init__()
         self.embeddings = embeddings
 
-    def embed_text(self, text: str) -> list[float]:
+    def embed_query(self, text: str) -> list[float]:
         return self.embeddings.embed_query(text)
 
-    async def aembed_text(self, text: str) -> list[float]:
+    async def aembed_query(self, text: str) -> list[float]:
         return await self.embeddings.aembed_query(text)
+
+    def embed_text(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
+    async def aembed_text(self, text: str) -> list[float]:
+        return await self.aembed_query(text)
 
 
 class RagasEvaluator(Evaluator):
@@ -46,21 +54,30 @@ class RagasEvaluator(Evaluator):
 
     async def evaluate(self, ctx: EvalContext) -> Dict[str, float]:
         """
-        Implementation of evaluation using Ragas.
+        Evaluate faithfulness and answer relevancy using ragas 0.4.x.
+
+        ragas 0.4.x changes vs. older versions:
+          - Metrics must be instances of ragas.metrics.base.Metric (not BaseMetric).
+            Faithfulness  → ragas.metrics._faithfulness.Faithfulness
+            AnswerRelevancy → ragas.metrics._answer_relevance.ResponseRelevancy
+          - Dataset must be an EvaluationDataset of SingleTurnSample objects.
+            Field names: user_input, response, retrieved_contexts.
+          - llm/embeddings are passed to evaluate() so ragas handles .init() itself.
         """
         with self.tracer.start_as_current_span("ragas_evaluation") as span:
             try:
-                # Prepare data
-                dataset = Dataset.from_dict(
-                    {
-                        "question": [ctx.query],
-                        "answer": [ctx.answer],
-                        "contexts": [ctx.contexts],
-                    }
+                # ── Build dataset ────────────────────────────────────────────
+                sample = SingleTurnSample(
+                    user_input=ctx.query,
+                    response=ctx.answer,
+                    retrieved_contexts=list(ctx.contexts),
                 )
+                dataset = EvaluationDataset(samples=[sample])
 
-                # Setup Ragas LLM
-                api_key_value = self.api_key() if callable(self.api_key) else self.api_key
+                # ── Build ragas LLM ──────────────────────────────────────────
+                api_key_value = (
+                    self.api_key() if callable(self.api_key) else self.api_key
+                )
                 if hasattr(api_key_value, "get_secret_value"):
                     api_key_value = api_key_value.get_secret_value()
 
@@ -68,34 +85,36 @@ class RagasEvaluator(Evaluator):
                     api_key=api_key_value,
                     base_url=self.base_url,
                 )
-                ragas_llm = llm_factory(
+                ragas_llm: InstructorBaseRagasLLM = llm_factory(
                     self.eval_model,
                     provider="openai",
                     client=judge_client,
                 )
 
-                # Setup Ragas Embeddings using our custom wrapper to avoid deprecation warnings
-                ragas_embeddings = RagasLangchainEmbeddings(embeddings=self.embeddings)
-
-                metrics: Sequence[Metric] = cast(  # Understand what these metrics do
-                    Sequence[Metric],
-                    [
-                        Faithfulness(llm=ragas_llm),
-                        AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
-                    ],
+                # ── Build ragas embeddings ───────────────────────────────────
+                ragas_embeddings = RagasLangchainEmbeddings(
+                    embeddings=self.embeddings
                 )
 
-                # Run evaluation
+                # ── Metrics (must be Metric subclasses in 0.4.x) ────────────
+                # Pass llm/embeddings via evaluate() so ragas calls .init()
+                # correctly; do NOT pass them to the metric constructors.
+                faithfulness_metric = Faithfulness()
+                answer_relevancy_metric = ResponseRelevancy()
+
+                # ── Run evaluation ───────────────────────────────────────────
                 result = evaluate(
                     dataset=dataset,
-                    metrics=metrics,
+                    metrics=[faithfulness_metric, answer_relevancy_metric],
+                    llm=ragas_llm,
+                    embeddings=ragas_embeddings,
                     run_config=RunConfig(timeout=45, max_retries=1, max_workers=2),
                     raise_exceptions=False,
-                    show_progress=True,
+                    show_progress=False,
                 )
 
-                # Extract scores
-                result_df = cast(Any, result).to_pandas()
+                # ── Extract scores ───────────────────────────────────────────
+                result_df = result.to_pandas()
                 f_score = float(result_df.loc[0, "faithfulness"])
                 r_score = float(result_df.loc[0, "answer_relevancy"])
 
@@ -111,7 +130,6 @@ class RagasEvaluator(Evaluator):
                 if math.isnan(f_score) or math.isnan(r_score):
                     span.set_attribute("ragas.nan_scores", True)
 
-                # Log to Phoenix as span attributes
                 span.set_attribute("ragas.faithfulness", f_score)
                 span.set_attribute("ragas.answer_relevancy", r_score)
                 span.set_attribute("ragas.eval_model", self.eval_model)

@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "arize-phoenix>=15.0.0",
     "datasets>=4.8.5",
     "fastembed>=0.8.0",
     "flashrank>=0.2.10",
@@ -14,8 +13,8 @@ dependencies = [
     "langchain-openai>=1.2.1",
     "langchain-qdrant>=1.1.0",
     "langchain-text-splitters>=1.1.2",
-    "openinference-instrumentation-langchain>=0.1.63",
-    "opentelemetry-exporter-otlp>=1.40.0",
+    "cohere>=5.21.1",
+    "opentelemetry-api>=1.40.0",
     "pydantic-settings>=2.11.0",
     "pypdf>=6.10.2",
     "python-dotenv>=1.2.2",
@@ -35,4 +34,3 @@ dev = [
 
 [tool.setuptools]
 packages = ["backend"]
-
