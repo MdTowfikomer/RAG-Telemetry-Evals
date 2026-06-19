@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download and cache sparse embedding model for hybrid search
+RUN python -c "from langchain_qdrant import FastEmbedSparse; FastEmbedSparse(model_name='Qdrant/bm42-all-minilm-l6-v2-attentions')"
+
+
 # Copy backend codebase
 COPY backend /app/backend
 

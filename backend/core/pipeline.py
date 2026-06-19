@@ -153,7 +153,7 @@ class RAGPipeline:
     def __init__(
         self,
         retriever: Retriever,
-        reranker: Reranker,
+        reranker: Reranker | None,
         generator: Generator,
         hooks: list[RAGHook] | None = None,
     ):
@@ -169,7 +169,7 @@ class RAGPipeline:
 
     async def prepare_context(self, query: str, k: int = 3) -> list[Document]:
         docs = await self.retriever.retrieve(query, k)
-        reranked = await self.reranker.rerank(query, docs)
+        reranked = await self.reranker.rerank(query, docs) if self.reranker else docs
         return reranked
 
     async def execute(self, query: str, k: int = 3) -> tuple[str, list[Document]]:
@@ -183,7 +183,7 @@ class RAGPipeline:
                 docs=docs,
                 is_stream=False,
             )
-            reranked = await self.reranker.rerank(query, docs)
+            reranked = await self.reranker.rerank(query, docs) if self.reranker else docs
             await self._trigger_hooks(
                 "after_rerank",
                 query=query,
@@ -223,7 +223,7 @@ class RAGPipeline:
                 docs=docs,
                 is_stream=True,
             )
-            reranked = await self.reranker.rerank(query, docs)
+            reranked = await self.reranker.rerank(query, docs) if self.reranker else docs
             await self._trigger_hooks(
                 "after_rerank",
                 query=query,

@@ -7,7 +7,7 @@ from time import monotonic
 from opentelemetry import trace as otel_trace
 from pydantic import SecretStr
 
-from backend.adapters import FlashRankReranker, OpenRouterGenerator, QdrantRetriever
+from backend.adapters import OpenRouterGenerator, QdrantRetriever
 from backend.core import InfrastructureFactory, RAGPipeline, Settings, TracingHook
 from backend.core.evaluation_store import (
     create_pending_evaluation,
@@ -48,7 +48,7 @@ embeddings = LazyProxy(factory.get_embeddings)
 vectorstore = LazyProxy(factory.get_vectorstore)
 
 retriever_adapter = QdrantRetriever(vectorstore=vectorstore)
-reranker_adapter = LazyProxy(FlashRankReranker)
+reranker_adapter = None  # Disabled to save RAM on free-tier hosting
 pipeline_cache: dict[str, RAGPipeline] = {}
 
 

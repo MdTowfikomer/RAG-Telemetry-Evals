@@ -31,3 +31,5 @@ rag.egg-info/
 
 # Zed files
 *.zed/  
+
+RESUME_ROADMAP.md
