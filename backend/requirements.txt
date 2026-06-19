@@ -18,3 +18,4 @@ fastembed
 flashrank
 psycopg2-binary
 langchain-cohere>=0.6.0
+python-multipart
