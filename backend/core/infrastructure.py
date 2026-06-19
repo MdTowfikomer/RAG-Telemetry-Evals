@@ -5,7 +5,6 @@ from qdrant_client import QdrantClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import Settings
-from .models import ChatMessage, ChatSession, Evaluation, UploadedFile  # Ensure models are registered
 
 
 class InfrastructureFactory:

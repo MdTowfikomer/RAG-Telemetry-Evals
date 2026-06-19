@@ -162,11 +162,11 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex justify-center overflow-hidden">
-      <div className="w-full max-w-[1600px] min-h-screen flex relative">
+      <div className="w-full max-w-400 min-h-screen flex relative">
         {/* Left Sidebar */}
         <div
           className={`transition-all duration-300 ease-in-out border-r border-slate-900 bg-slate-950 shrink-0 ${
-            isLeftCollapsed ? "w-0 opacity-0 pointer-events-none" : "w-[280px] opacity-100"
+            isLeftCollapsed ? "w-0 opacity-0 pointer-events-none" : "w-70 opacity-100"
           } overflow-hidden flex flex-col h-screen`}
         >
           <LeftPane
@@ -210,7 +210,7 @@ function App() {
         {/* Right Sidebar */}
         <div
           className={`transition-all duration-300 ease-in-out bg-slate-950 shrink-0 ${
-            isRightCollapsed ? "w-0 opacity-0 pointer-events-none" : "w-[360px] opacity-100"
+            isRightCollapsed ? "w-0 opacity-0 pointer-events-none" : "w-90 opacity-100"
           } overflow-hidden flex flex-col h-screen`}
         >
           <RightPane

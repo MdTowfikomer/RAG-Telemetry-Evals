@@ -8,7 +8,6 @@ import {
   AlertCircle,
   FileText,
   Plus,
-  Search,
   Globe,
   Settings as SettingsIcon,
   PanelLeftClose,
@@ -17,7 +16,6 @@ import {
   MessageSquareText,
   History as HistoryIcon,
   Clipboard,
-  Sparkles,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { UploadedFile, SessionSummary } from "../types";
@@ -53,11 +51,7 @@ function LeftPane({
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // Custom states for search/crawl simulation
-  const [webQuery, setWebQuery] = useState("");
-  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
-  const [searchStatus, setSearchStatus] = useState<string>("");
+
 
   // UI state
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -242,48 +236,6 @@ The website at ${url} discusses advanced methods of context search. By vectorizi
     }
   };
 
-  const handleWebSearchSubmit = async () => {
-    const query = webQuery.trim();
-    if (!query) return;
-
-    setIsSearchingWeb(true);
-    setSearchStatus("Initializing search...");
-    setError(null);
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      setSearchStatus("Contacting search engine...");
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      setSearchStatus("Ingesting 3 top matching pages...");
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      const filename = `web_search_${query.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.txt`;
-      const content = `[Web Search Compilation]
-Search Query: "${query}"
-Date: ${new Date().toLocaleString()}
-
-Top matching search summaries successfully compiled and indexed:
-
-Result 1: Overview of ${query}
-Detailed guide explaining the fundamental concepts of ${query}, architectural requirements, and integration best practices. Developers use these blueprints to configure enterprise services.
-
-Result 2: Case Studies on ${query}
-Real-world benchmarks demonstrating how implementing ${query} improves latency, optimizes processing accuracy by 34%, and reduces context injection overhead.
-
-Result 3: Troubleshooting and Performance
-Common errors encountered with ${query} and mitigation techniques including caching models, threshold reranking, and chunk size tuning.`;
-
-      const file = new File([content], filename, { type: "text/plain" });
-      await api.uploadDocuments([file]);
-      await fetchDocs();
-      setWebQuery("");
-    } catch (err: any) {
-      setError("Failed to index web search results.");
-    } finally {
-      setIsSearchingWeb(false);
-      setSearchStatus("");
-    }
-  };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this source?")) return;
@@ -361,7 +313,7 @@ Common errors encountered with ${query} and mitigation techniques including cach
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowAddMenu(!showAddMenu)}
-            disabled={isUploading || isSearchingWeb}
+            disabled={isUploading}
             className="w-full flex items-center justify-center gap-2 rounded-lg bg-slate-900 border border-slate-800 py-2.5 px-4 text-sm font-semibold text-slate-200 transition hover:bg-slate-850 hover:border-slate-700 cursor-pointer disabled:opacity-50"
           >
             {isUploading ? (
@@ -417,56 +369,6 @@ Common errors encountered with ${query} and mitigation techniques including cach
           />
         </div>
 
-        {/* Search the Web Card */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-          <label className="block text-xs font-semibold text-slate-300 mb-2.5">
-            Search the web for new sources
-          </label>
-          <div className="relative mb-3">
-            <input
-              type="text"
-              value={webQuery}
-              onChange={(e) => setWebQuery(e.target.value)}
-              placeholder="Query or URL..."
-              onKeyDown={(e) => e.key === "Enter" && handleWebSearchSubmit()}
-              disabled={isSearchingWeb || isUploading}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 py-2 pl-3 pr-10 text-xs text-slate-200 placeholder:text-slate-600 focus:border-cyan-500/80 focus:outline-none disabled:opacity-50"
-            />
-            <button
-              onClick={handleWebSearchSubmit}
-              disabled={isSearchingWeb || !webQuery.trim()}
-              className="absolute right-2 top-2 p-1 text-slate-500 hover:text-cyan-400 cursor-pointer transition disabled:opacity-30"
-            >
-              {isSearchingWeb ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Search className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              <div className="flex items-center gap-1 rounded bg-slate-950 px-2 py-1 text-[10px] text-slate-400 border border-slate-900">
-                <Globe className="h-3 w-3 text-slate-500" />
-                <span>Web</span>
-                <ChevronDown className="h-2.5 w-2.5 text-slate-600" />
-              </div>
-              <div className="flex items-center gap-1 rounded bg-slate-950 px-2 py-1 text-[10px] text-slate-400 border border-slate-900">
-                <Sparkles className="h-3 w-3 text-cyan-500/80" />
-                <span>Fast research</span>
-                <ChevronDown className="h-2.5 w-2.5 text-slate-600" />
-              </div>
-            </div>
-          </div>
-
-          {isSearchingWeb && (
-            <div className="mt-2 text-[10px] text-cyan-400 flex items-center gap-1.5 bg-cyan-950/20 border border-cyan-900/30 p-2 rounded-lg">
-              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-              <span>{searchStatus}</span>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Error Message */}
@@ -495,7 +397,7 @@ Common errors encountered with ${query} and mitigation techniques including cach
       </div>
 
       {/* Sources List */}
-      <div className="flex-1 overflow-y-auto space-y-2 max-h-[360px] custom-scrollbar pr-0.5">
+      <div className="flex-1 overflow-y-auto space-y-2 max-h-90 custom-scrollbar pr-0.5">
         {documents.length === 0 ? (
           <p className="text-center text-xs text-slate-600 py-6">
             No source documents uploaded yet.
@@ -615,7 +517,7 @@ Common errors encountered with ${query} and mitigation techniques including cach
                 No past conversations.
               </p>
             ) : (
-              <div className="space-y-1.5 max-h-[160px] overflow-y-auto custom-scrollbar">
+              <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
                 {sessions.map((session) => {
                   const isActive = `/c/${session.id}` === activeChatId;
                   return (
