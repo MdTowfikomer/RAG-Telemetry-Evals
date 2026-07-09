@@ -29,6 +29,10 @@ class OpenRouterGenerator(Generator):
             Answer the following question based ONLY on the provided context.
             If the answer is not in the context, say that you don't know.
 
+            Format your response using clean, standard Markdown:
+            1. Use proper Markdown tables. Always ensure there is a newline separating the header, the separator, and each row. Never collapse table cells or rows onto a single line.
+            2. Use standard bullet points (- or *) for lists. Do NOT indent plain list items with leading spaces (e.g. four spaces), as this forces the parser to render them inside code blocks. Make sure list items start at the beginning of the line.
+
             Context:
             {context}
 

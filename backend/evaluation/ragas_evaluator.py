@@ -99,6 +99,53 @@ class RagasEvaluator(Evaluator):
                     max_retries=5,
                 )
 
+                # ── Retry wrapper to handle OpenRouter/Venice 429 rate limits ──
+                import time
+                import re
+                import asyncio
+                from instructor.core import InstructorRetryException
+
+                original_generate = ragas_llm.generate
+                original_agenerate = ragas_llm.agenerate
+
+                def get_wait_time(exception: Exception) -> int:
+                    try:
+                        err_str = str(exception)
+                        if "retry_after_seconds" in err_str:
+                            match = re.search(r"'retry_after_seconds':\s*(\d+)", err_str)
+                            if match:
+                                return int(match.group(1)) + 1
+                    except Exception:
+                        pass
+                    return 15
+
+                 # Need to define these with self as the first parameter or bind them using MethodType
+                 # Since llm_factory returns an instance, we can bind them or use simple closures
+                def wrapped_generate(prompt, response_model):
+                    for attempt in range(5):
+                        try:
+                            return original_generate(prompt, response_model)
+                        except (InstructorRetryException, Exception) as e:
+                            if attempt == 4:
+                                raise e
+                            wait_time = get_wait_time(e)
+                            print(f"Ragas evaluation rate-limited. Retrying in {wait_time}s... (Attempt {attempt+1}/5)")
+                            time.sleep(wait_time)
+
+                async def wrapped_agenerate(prompt, response_model):
+                    for attempt in range(5):
+                        try:
+                            return await original_agenerate(prompt, response_model)
+                        except (InstructorRetryException, Exception) as e:
+                            if attempt == 4:
+                                raise e
+                            wait_time = get_wait_time(e)
+                            print(f"Ragas evaluation rate-limited. Retrying in {wait_time}s... (Attempt {attempt+1}/5)")
+                            await asyncio.sleep(wait_time)
+
+                ragas_llm.generate = wrapped_generate
+                ragas_llm.agenerate = wrapped_agenerate
+
                 # ── Build ragas embeddings ───────────────────────────────────
                 ragas_embeddings = RagasLangchainEmbeddings(
                     embeddings=self.embeddings
