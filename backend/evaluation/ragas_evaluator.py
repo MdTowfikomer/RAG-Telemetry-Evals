@@ -90,11 +90,13 @@ class RagasEvaluator(Evaluator):
                 judge_client = OpenAI(
                     api_key=api_key_value,
                     base_url=self.base_url,
+                    max_retries=5,
                 )
                 ragas_llm: InstructorBaseRagasLLM = llm_factory(
                     self.eval_model,
                     provider="openai",
                     client=judge_client,
+                    max_retries=5,
                 )
 
                 # ── Build ragas embeddings ───────────────────────────────────
