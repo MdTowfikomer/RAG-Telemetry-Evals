@@ -65,7 +65,7 @@ function ChatPane({
               <PanelLeftOpen className="h-4 w-4" />
             </button>
           )}
-          <h1 className="text-sm font-bold text-slate-100">AI Assistant</h1>
+          <h1 className="text-sm font-bold text-slate-100">RAG Evals</h1>
         </div>
         
         <div className="flex items-center gap-2">

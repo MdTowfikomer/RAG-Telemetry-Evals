@@ -1,5 +1,6 @@
 import { Bot, User } from "lucide-react";
 import type { ChatMessage } from "../types";
+import ReactMarkdown from "react-markdown";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -31,7 +32,13 @@ function MessageBubble({ message }: MessageBubbleProps) {
             : "border border-slate-800 bg-slate-900 text-slate-100"
         }`}
       >
-        {message.content || "..."}
+        {isUser ? (
+          message.content
+        ) : (
+          <div className="markdown-content">
+            <ReactMarkdown>{message.content || "..."}</ReactMarkdown>
+          </div>
+        )}
 
         {!isUser && (
           <div className="mt-3 flex flex-wrap gap-2 text-[11px]">

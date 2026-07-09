@@ -17,14 +17,14 @@ This project implements a modular Retrieval-Augmented Generation (RAG) system wi
 - **Frontend**: TypeScript, React, Vite
 - **Vector Database**: Qdrant
 - **RAG Framework**: LangChain
-- **LLM Integration**: LangChain OpenAI, LangChain HuggingFace, OpenRouter (OpenAI SDK compatible)
+- **LLM Integration**: LangChain OpenAI, Cohere, OpenRouter (OpenAI SDK compatible)
 - **RAG Evaluation**: Ragas
-- **Persistence**: SQLModel (with SQLite)
+- **Persistence**: SQLModel (with SQLite / PostgreSQL)
 - **Package Management**: uv
 
 ## Prerequisites
 
-- **Python 3.12+**
+- **Python 3.12+** (via uv or virtual environment)
 - **Node.js 18+** (for frontend development)
 - **pnpm** (recommended for JavaScript package management) or npm/yarn
 - **Docker** (for Qdrant)
@@ -41,23 +41,39 @@ cd Persistent-RAG-Workbench
 ### 2. Environment Setup
 
 Create a `.env` file in the root directory and configure necessary environment variables.
-A `.env.example` file is typically provided for reference.
+
+```bash
+cp .env.example .env
+```
 
 ```ini
 # .env example
-OPENAI_API_KEY="sk-..." # Your OpenAI API key or OpenRouter key
-OPENAI_BASE_URL="https://openrouter.ai/api/v1" # Example for OpenRouter
-QDRANT_HOST="localhost"
-QDRANT_PORT="6333"
+OPENROUTER_API_KEY="sk-or-v1-..." # Required: Your OpenRouter API key
+COHERE_API_KEY="your-cohere-key"  # Required: For generating dense embeddings
+QDRANT_URL="http://localhost:6333" # URL to your Qdrant instance
 ```
 
-### 3. Install Backend Dependencies
+### Required
 
-```bash
-uv pip install -e ".[dev]"
-```
+| Variable | Description | Example |
+| -------- | ----------- | ------- |
+| `OPENROUTER_API_KEY` | API key for OpenRouter (must not be empty) | `sk-or-v1-...` |
+| `COHERE_API_KEY` | API key for Cohere embeddings | `...` |
 
-### 4. Start Docker Services
+### Optional
+
+| Variable | Description | Default |
+| -------- | ----------- | ------- |
+| `QDRANT_URL` | Full URL to the Qdrant service | `http://localhost:6333` |
+| `QDRANT_API_KEY` | API key for Qdrant (if using managed cloud) | `None` |
+| `COLLECTION_NAME`| The Qdrant collection name | `rag_collection` |
+| `EMBEDDING_MODEL`| Embedding model identifier | `embed-english-v3.0` |
+| `OPENROUTER_MODEL`| Model to use for chat generation | `openrouter/free` |
+| `RAGAS_EVAL_MODEL`| Model to use for evaluation via Ragas | `openrouter/free` |
+| `DATABASE_URL` | SQLite / PG connection string | `sqlite:///sqlite.db` |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins | `["http://localhost:5173", ...]` |
+
+### 3. Start Qdrant Services
 
 Start Qdrant using Docker Compose:
 
@@ -65,132 +81,105 @@ Start Qdrant using Docker Compose:
 docker compose up -d
 ```
 
-### 5. Run Backend Migrations
+### 4. Setup Backend
 
-Initialize the SQLite database for session persistence:
+Install dependencies via `uv`:
 
 ```bash
-# This will create a local sqlite.db file
+uv pip install -e ".[dev]"
+```
+
+Run database migrations to initialize SQLite:
+
+```bash
 python backend/app.py migrate
 ```
 
-### 6. Start the Backend Server
+### 5. Ingest Documents
 
+Place your PDFs, Markdown, and Text files in the `data/` folder and run the ingestion script to chunk and embed them:
+
+```bash
+uv run backend/ingest.py
+```
+
+### 6. Start the Servers
+
+**Terminal 1: FastAPI Backend**
 ```bash
 uv run backend/app.py
 ```
+*API available at `http://localhost:8000`*
 
-The backend API will be available at `http://localhost:8000`.
-
-### 7. Install Frontend Dependencies
-
-Navigate to the `frontend` directory and install dependencies:
-
+**Terminal 2: React Frontend**
 ```bash
 cd frontend
-pnpm install # or npm install or yarn install
+pnpm install
+pnpm dev
 ```
+*Frontend available at `http://localhost:5173`*
 
-### 8. Start the Frontend Development Server
+---
 
-```bash
-pnpm dev # or npm run dev or yarn dev
-```
-
-Open your browser to `http://localhost:5173` (or the port indicated by Vite).
-
-## Architecture
+## Architecture & Code-Level Flow
 
 ### Directory Structure
 
 ```
 ├── .venv/                     # Python virtual environment
 ├── backend/                   # FastAPI application
-│   ├── adapters/              # Interfaces for RAG components (Retriever, Reranker, Generator)
-│   ├── core/                  # Core RAG logic
-│   ├── evaluation/            # Ragas evaluation logic
-│   ├── services/              # Business logic services
+│   ├── adapters/              # Plugins/implementations (QdrantRetriever, OpenRouterGenerator)
+│   ├── api/                   # HTTP interface (routes, schemas, dependencies)
+│   ├── core/                  # Domain logic (Models, RAGPipeline, Infrastructure, Interfaces)
+│   ├── evaluation/            # Quality control (RagasEvaluator, MockEvaluator)
+│   ├── services/              # Orchestrators (chat_service, evaluation_service)
 │   ├── tests/                 # Backend tests
-│   ├── app.py                 # Main FastAPI application entry point
-│   └── ingest.py              # Script for document ingestion
+│   ├── app.py                 # FastAPI application entry point
+│   └── ingest.py              # Script for document chunking & ingestion
 ├── data/                      # Local files for ingestion (PDFs, Markdowns, TXT)
 ├── frontend/                  # React/TypeScript application
-│   ├── public/                # Static assets
-│   ├── src/                   # Frontend source code (components, hooks, API)
-│   ├── index.html             # Frontend entry point
-│   ├── package.json           # Frontend dependencies and scripts
-│   └── vite.config.ts         # Vite configuration
-├── qdrant_storage/            # Persistent storage for Qdrant vector database
-├── .gitignore
-├── .python-version
-├── docker-compose.yml         # Docker configuration for Qdrant
-├── main.py                    # Main script (if any for overall orchestration)
-├── PRD.md                     # Product Requirements Document
-├── pyproject.toml             # Python project configuration and dependencies
-├── README.md                  # This file
-├── test_chat.py               # Integration tests for chat functionality
-└── uv.lock                    # Dependency lock file for uv
+│   ├── src/                   # Components, hooks (useChat), API
+│   └── package.json           # Frontend dependencies
+├── qdrant_storage/            # Persistent storage for Qdrant
+├── docker-compose.yml         # Docker config for Qdrant
+├── pyproject.toml             # Python project configuration
+└── README.md                  # Project documentation
 ```
 
 ### Request Lifecycle (Chat Interaction)
 
-1.  **User Query**: User inputs a query in the React frontend.
-2.  **Frontend API Call**: Frontend sends the query to the FastAPI backend.
-3.  **Backend Processing**:
-    *   `RAGPipeline` orchestrates retrieval, context construction, and generation.
-    *   **Retrieval**: `Retriever` adapter fetches relevant documents from Qdrant.
-    *   **Generation**: `Generator` adapter uses an LLM (e.g., OpenRouter) to generate a response.
-4.  **Streaming Response**: Backend streams the LLM response back to the frontend using Server-Sent Events (SSE).
-5.  **Asynchronous Evaluation**: In the background, `Ragas` metrics are computed, and results are pushed to the frontend via SSE.
-6.  **Persistence**: Chat messages and evaluation results are saved to the SQLite database via SQLModel.
+1. **User Query**: User inputs a query in the React frontend.
+2. **API Call**: Request hits the `POST /chat` endpoint in `backend/api/routes/chat.py`.
+3. **Service Layer**: `ChatService.chat` is invoked, saving the user message to SQLite and triggering the pipeline.
+4. **Pipeline Execution**: `RAGPipeline.execute()` runs:
+   - **Retrieval**: `QdrantRetriever` takes the raw query and passes it to `QdrantVectorStore`. The query is embedded via Cohere (`embed_query`) and FastEmbed, then matched against Qdrant.
+   - **Generation**: Relevant chunks are formatted into a context prompt and sent to OpenRouter via the `Generator` adapter.
+5. **Response**: Backend streams the response back to the UI via Server-Sent Events (SSE).
+6. **Async Evaluation**: A background task uses Ragas to compute metrics (Faithfulness, Relevancy) and saves the results to the database.
 
-### Data Flow
+### Detailed Code Flow: The Query embedding path
 
-```
-User Action (Frontend)
-    ↓
-API Call (Frontend)
-    ↓
-FastAPI Backend (RAGPipeline: Retrieve → Generate)
-    ↓
-Qdrant (Vector DB for Retrieval)
-    ↓
-LLM (e.g., OpenRouter for Generation)
-    ↓
-Streaming Response (SSE to Frontend)
-    ↓
-Ragas Evaluation (Background task in Backend)
-    ↓
-SQLite Database (Session History, Messages, Evaluations)
-    ↓
-UI Update (Frontend via SSE)
-```
+The exact code path from an API request to vector embedding is tightly controlled:
 
-### Key Components
+1. **API receives query:** `request.query` arrives at `chat_endpoint`.
+2. **Service calls Retriever:** `await self.retriever.retrieve(query, k)`
+3. **Adapter calls VectorStore:** `self.vectorstore.similarity_search(query, k*3)`
+4. **LangChain Embeds the Query:** Inside the Qdrant Langchain integration:
+   ```python
+   # Dense embedding
+   query_vector = self.embedding.embed_query(query)
+   # Sparse embedding (hybrid mode)
+   sparse_vector = self.sparse_embedding.embed_query(query)
+   # Issue the search to Qdrant, passing both vectors
+   hits = self.client.search(query_vector=query_vector, sparse_vectors=...)
+   ```
 
-**Backend (FastAPI)**
-
--   **`app.py`**: Main FastAPI application. Defines API endpoints for chat, ingestion, and history.
--   **`adapters/`**: Contains interfaces and implementations for `Retriever`, `Reranker`, and `Generator` to ensure modularity.
--   **`core/`**: Houses the core `RAGPipeline` logic, orchestrating the steps of the RAG process.
--   **`evaluation/`**: Logic for computing Ragas metrics and managing evaluation states.
--   **`services/`**: Implements business logic, including interaction with the persistence layer.
--   **SQLModel**: Used for ORM with SQLite to manage chat sessions, messages, and evaluation results.
-
-**Frontend (React/TypeScript)**
-
--   **`src/`**: Contains React components, hooks (e.g., `useChat` for state management), and API integration logic.
--   **`vite.config.ts`**: Frontend build configuration using Vite.
-
-**External Services**
-
--   **Qdrant**: Vector database for efficient similarity search during retrieval. Persistent data stored in `./qdrant_storage`.
-
-### Database Schema (Conceptual)
+### Database Schema (SQLite/SQLModel)
 
 ```
 sessions
 ├── id (UUID, PK)
+├── title (string)
 ├── created_at (datetime)
 └── updated_at (datetime)
 
@@ -199,146 +188,60 @@ messages
 ├── session_id (UUID, FK -> sessions)
 ├── role (string, "user" or "assistant")
 ├── content (text)
-├── created_at (datetime)
-└── updated_at (datetime)
+├── token_count (int)
+└── latency_ms (int)
 
 evaluations
 ├── id (UUID, PK)
 ├── message_id (UUID, FK -> messages)
 ├── faithfulness (float, optional)
 ├── answer_relevancy (float, optional)
-├── latency (float, optional)
+├── context_precision (float, optional)
 ├── status (string, "pending", "completed", "failed")
-├── version (int) # Allows tracking re-evaluations
-├── created_at (datetime)
-└── updated_at (datetime)
+└── version (int) # Allows tracking re-evaluations
 ```
 
-## Environment Variables
-
-### Required
-
-| Variable         | Description                                     | How to Get                                  |
-| :--------------- | :---------------------------------------------- | :------------------------------------------ |
-| `OPENAI_API_KEY` | API key for OpenAI or OpenAI-compatible service | From OpenAI, OpenRouter, or other providers |
-| `OPENAI_BASE_URL` | Base URL for the OpenAI-compatible API (e.g., for OpenRouter) | Provided by your LLM API provider |
-
-### Optional
-
-| Variable        | Description                                     | Default      |
-| :-------------- | :---------------------------------------------- | :----------- |
-| `QDRANT_HOST`   | Hostname for the Qdrant service                 | `localhost`  |
-| `QDRANT_PORT`   | Port for the Qdrant service                     | `6333`       |
-| `DATABASE_URL`  | Connection string for the SQLite database | `sqlite:///sqlite.db` |
-
+---
 
 ## Available Scripts
 
-### General
-
--   `uv pip install -e ".[dev]"`: Install backend dependencies.
--   `docker compose up -d`: Start Qdrant.
--   `docker compose down`: Stop Docker services.
-
-### Backend
-
--   `uv run backend/app.py`: Start the FastAPI backend server.
--   `python backend/app.py migrate`: Run database migrations (for SQLModel/SQLite).
--   `uv run backend/ingest.py`: Run the document ingestion script.
--   `uv run pytest backend/tests/`: Run backend tests.
-
-### Frontend
-
--   `cd frontend && pnpm install`: Install frontend dependencies.
--   `cd frontend && pnpm dev`: Start the frontend development server.
--   `cd frontend && pnpm build`: Build the frontend for production.
--   `cd frontend && pnpm test`: Run frontend tests.
+| Command | Description |
+| ------- | ----------- |
+| `uv pip install -e ".[dev]"` | Install backend dependencies |
+| `uv run backend/app.py` | Start the FastAPI server |
+| `python backend/app.py migrate`| Run database migrations |
+| `uv run backend/ingest.py` | Run document ingestion |
+| `uv run pytest backend/tests/` | Run all backend tests |
+| `pnpm dev` (in `/frontend`) | Start frontend server |
 
 ## Testing
 
-### Running Tests
-
-To run all backend tests:
-
+**Backend Tests:**
+Run the backend Minitest/Pytest suite:
 ```bash
 uv run pytest backend/tests/
 ```
+Tests cover SQLModel schemas, RAGPipeline (via mocks), and evaluation status transitions.
 
-To run all frontend tests:
-
+**Frontend Tests:**
 ```bash
 cd frontend
 pnpm test
 ```
-
-### Test Structure
-
--   **Backend (`backend/tests/`)**:
-    *   Unit tests for SQLModel schemas (relational integrity, cascades).
-    *   Unit tests for `RAGPipeline` (using mock adapters for sequence, error handling).
-    *   Tests for evaluation status transitions (mocking background tasks).
--   **Frontend (`frontend/src/tests/` or similar)**:
-    *   Vitest tests for `useChat` hook and API adapter (state transitions, SSE handling).
--   **Integration Tests**:
-    *   Focus on end-to-end RAG chain (Input -> Retrieval -> Output) and persistence.
+Vitest covers the `useChat` hook, API adapters, and state transitions.
 
 ## Deployment
 
-This project is designed with Docker Compose for easy local deployment. For production, consider deploying the backend (FastAPI) and frontend separately, using a cloud provider of your choice.
+This project uses Docker Compose for local ease. For production deployment, you can containerize the backend and frontend separately.
 
-### Docker
+### Docker deployment
 
-You can build and run the entire application using Docker:
+Build and run the entire application using Docker:
 
 ```bash
-# Build the backend image (if not using uv run directly)
+# Build the backend image
 docker build -t rag-backend -f backend/Dockerfile .
 
-# Start services (including Qdrant, Phoenix, and potentially the backend)
-docker compose up
+# Start Qdrant and the backend
+docker compose up -d
 ```
-
-Ensure your environment variables are correctly set for the Docker containers.
-
-## Troubleshooting
-
-### Docker Services Not Starting
-
-**Error:** `port is already allocated` or similar network errors.
-
-**Solution:**
-Ensure no other services are running on ports `6333`, `6334`, `6006`, or `8000`. Stop any conflicting processes or change the port mappings in `docker-compose.yml`.
-
-### Database Connection Issues
-
-**Error:** `sqlite.db` not found or connection errors.
-
-**Solution:**
-Ensure you have run the migrations to create the SQLite database:
-```bash
-python backend/app.py migrate
-```
-
-### Frontend Build/Run Issues
-
-**Error:** `vite` command not found or dependency issues.
-
-**Solution:**
-Navigate to the `frontend` directory and ensure all dependencies are installed and the correct package manager command is used:
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-### RAG Pipeline Errors
-
-**Error:** LLM errors, retrieval failures.
-
-**Solution:**
-1.  Check `OPENAI_API_KEY` and `OPENAI_BASE_URL` in your `.env` file.
-2.  Verify Qdrant is running: `docker ps`.
-
-## Further Notes
-
-This system follows a "developer's workbench" philosophy, prioritizing portability (SQLite), developer transparency (exposed metrics), and modularity over high-scale multi-user features. It's an excellent foundation for iterating on RAG systems.

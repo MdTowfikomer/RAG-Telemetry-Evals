@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { PanelRightClose } from "lucide-react";
 import ContextCard from "./ContextCard";
+import ReactMarkdown from "react-markdown";
+
 import type {
   ChatMessage,
   ContextDoc,
@@ -34,7 +36,9 @@ function RightPane({
     <aside className="p-4 flex flex-col h-full bg-slate-950 text-slate-200 border-l border-slate-900 overflow-y-auto">
       {/* Header Close Panel */}
       <div className="mb-4 flex items-center justify-between border-b border-slate-900 pb-2 shrink-0">
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Inspector</h2>
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+          Inspector
+        </h2>
         <button
           onClick={onCollapse}
           className="p-1 text-slate-500 hover:text-slate-200 hover:bg-slate-900 rounded transition cursor-pointer"
@@ -97,9 +101,12 @@ function RightPane({
                   <p>Latency: {selectedMessage.latencyMs ?? "--"} ms</p>
                   <p>Token Count: {selectedMessage.tokenCount ?? "--"}</p>
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-slate-400">
-                  {selectedMessage.reasoning ?? "Reasoning not available yet."}
-                </p>
+                <div className="mt-3 prose prose-invert prose-xs max-w-none text-slate-400">
+                  <ReactMarkdown>
+                    {selectedMessage.reasoning ??
+                      "Reasoning not available yet."}
+                  </ReactMarkdown>
+                </div>
               </article>
 
               <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
@@ -122,11 +129,13 @@ function RightPane({
                         </p>
                         <p>Faithfulness: {formatScore(entry.faithfulness)}</p>
                         <p>Relevancy: {formatScore(entry.answerRelevancy)}</p>
-                        <p className="mt-1 text-slate-400">
-                          {entry.reasoning ??
-                            entry.errorMessage ??
-                            "No reasoning recorded."}
-                        </p>
+                        <div className="mt-1 prose prose-invert prose-xs max-w-none text-slate-400">
+                          <ReactMarkdown>
+                            {entry.reasoning ??
+                              entry.errorMessage ??
+                              "No reasoning recorded."}
+                          </ReactMarkdown>
+                        </div>
                       </li>
                     ))}
                   </ul>
