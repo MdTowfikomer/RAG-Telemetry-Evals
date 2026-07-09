@@ -114,7 +114,7 @@ class RagasEvaluator(Evaluator):
                     metrics=[faithfulness_metric, answer_relevancy_metric],
                     llm=ragas_llm,
                     embeddings=ragas_embeddings,
-                    run_config=RunConfig(timeout=45, max_retries=1, max_workers=2),
+                    run_config=RunConfig(timeout=60, max_retries=5, max_workers=1),
                     raise_exceptions=False,
                     show_progress=False,
                 )
